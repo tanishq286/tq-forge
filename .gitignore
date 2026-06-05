@@ -1,0 +1,19 @@
+# tq-forge state home (never commit user data)
+.tq-forge/
+sandbox/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
+
+# Python
+__pycache__/
+*.pyc
+
+# Temp
+*.tmp
+*.log

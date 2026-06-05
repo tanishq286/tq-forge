@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ShellCheck scripts
+        uses: ludeeus/action-shellcheck@master
+        with:
+          scandir: ./scripts
+
+      - name: Validate JSON manifests
+        run: |
+          python3 -c "import json; json.load(open('.claude-plugin/plugin.json'))"
+          python3 -c "import json; json.load(open('.claude-plugin/marketplace.json'))"
+
+      - name: Score every bundled skill (must be >= 7)
+        run: |
+          set -e
+          fail=0
+          for d in skills/*/; do
+            out=$(bash scripts/quality-score.sh --json "$d")
+            avg=$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['average'])" "$out")
+            echo "$d -> $avg"
+            python3 -c "import sys; sys.exit(0 if float(sys.argv[1])>=7 else 1)" "$avg" || { echo "  ❌ below 7"; fail=1; }
+          done
+          exit $fail
+
+      - name: Dry-test every bundled skill (must pass)
+        run: |
+          set -e
+          fail=0
+          for d in skills/*/; do
+            out=$(bash scripts/dry-test.sh --json "$d")
+            verdict=$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['verdict'])" "$out")
+            echo "$d -> $verdict"
+            [ "$verdict" = "pass" ] || { echo "  ❌ $verdict"; fail=1; }
+          done
+          exit $fail

@@ -1,0 +1,34 @@
+{
+  "name": "tq-forge",
+  "owner": {
+    "name": "tanishq286",
+    "url": "https://github.com/tanishq286"
+  },
+  "metadata": {
+    "description": "tq-forge — autonomous skill + agent factory for Claude Code.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "tq-forge",
+      "source": "./",
+      "description": "Forge, score, improve, and promote Claude Code skills and agents from one-line intents. 13 slash commands.",
+      "version": "1.0.0",
+      "skills": [
+        { "name": "tq-forge",            "description": "Scaffold a new skill or agent from a plain-language intent" },
+        { "name": "tq-forge-skill",      "description": "Force-skill mode — scaffold a single SKILL.md" },
+        { "name": "tq-forge-agent",      "description": "Force-agent mode — scaffold a 5-file agent" },
+        { "name": "tq-forge-promote",    "description": "Move a sandbox skill or agent into production" },
+        { "name": "tq-forge-improve",    "description": "Rewrite only the weak sections of one artifact" },
+        { "name": "tq-forge-improve-all","description": "Batch-improve every artifact scoring below 7/10" },
+        { "name": "tq-forge-test",       "description": "Re-score an artifact without rewriting it" },
+        { "name": "tq-forge-list",       "description": "List all forged skills and agents with scores" },
+        { "name": "tq-forge-agents",     "description": "List forged agents with kind, hand-off wiring, and scores" },
+        { "name": "tq-forge-status",     "description": "Show forge state, queue, and halt status" },
+        { "name": "tq-forge-scan",       "description": "Scan installed skills and detect coverage gaps" },
+        { "name": "tq-forge-queue",      "description": "View and manage the deferred forge-work queue" },
+        { "name": "tq-forge-resume",     "description": "Resume after a pause and drain the queue" }
+      ]
+    }
+  ]
+}

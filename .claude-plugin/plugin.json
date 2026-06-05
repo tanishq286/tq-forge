@@ -1,0 +1,20 @@
+{
+  "name": "tq-forge",
+  "version": "1.0.0",
+  "description": "An autonomous skill + agent factory for Claude Code. Forge new slash-command skills and 5-file agents from a one-line intent, score them for structural quality, and promote them into production — all from inside Claude Code.",
+  "author": {
+    "name": "tanishq286"
+  },
+  "homepage": "https://github.com/tanishq286/tq-forge",
+  "repository": "https://github.com/tanishq286/tq-forge",
+  "license": "MIT",
+  "keywords": [
+    "claude-code",
+    "skills",
+    "agents",
+    "scaffolding",
+    "factory",
+    "automation",
+    "developer-tools"
+  ]
+}
