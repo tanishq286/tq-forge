@@ -7,10 +7,15 @@
 Forge new slash-command skills and multi-file agents from a one-line intent —
 scored, sandboxed, and promoted into production without leaving your terminal.
 
+[![CI](https://github.com/tanishq286/tq-forge/actions/workflows/ci.yml/badge.svg)](https://github.com/tanishq286/tq-forge/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-d97757)](https://claude.com/claude-code)
 ![Skills](https://img.shields.io/badge/skills-13-blue)
 ![Shell](https://img.shields.io/badge/shell-bash-89e051)
+
+<br/>
+
+<img src="assets/demo.svg" alt="tq-forge demo: forging a skill and scoring it" width="760"/>
 
 </div>
 
