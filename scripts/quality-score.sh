@@ -19,7 +19,7 @@
 
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=common.sh
+# shellcheck source=common.sh disable=SC1091
 source "$HERE/common.sh"
 
 JSON_OUT=false
