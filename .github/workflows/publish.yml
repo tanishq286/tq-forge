@@ -1,0 +1,47 @@
+name: Publish to npm
+
+# Publishes the package to npm whenever you publish a GitHub Release.
+# Flow: bump "version" in package.json -> commit -> tag -> create a GitHub
+# Release for that tag -> this workflow publishes it.
+#
+# Requires a repository secret NPM_TOKEN (an npm Automation token, which
+# bypasses 2FA). Set it once with:
+#   gh secret set NPM_TOKEN --repo <owner>/<repo>
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # enables npm provenance
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Guard — package.json version must match the release tag
+        run: |
+          PKG_VERSION="v$(node -p "require('./package.json').version")"
+          TAG="${GITHUB_REF_NAME}"
+          echo "package.json: $PKG_VERSION   release tag: $TAG"
+          if [ "$PKG_VERSION" != "$TAG" ]; then
+            echo "::error::Tag ($TAG) does not match package.json version ($PKG_VERSION). Bump package.json before releasing."
+            exit 1
+          fi
+
+      - name: Sanity check (CLI + pack)
+        run: |
+          node --check bin/cli.js
+          npm pack --dry-run
+
+      - name: Publish
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

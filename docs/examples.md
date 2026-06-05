@@ -1,6 +1,10 @@
 # Examples
 
-A few intents and what tq-forge does with them.
+A few intents and what tq-forge does with them. Two of these are checked into
+the repo as complete, real artifacts you can read end to end:
+
+- **Skill:** [`examples/forged-skills/github-pr-digest/SKILL.md`](../examples/forged-skills/github-pr-digest/SKILL.md)
+- **Agent:** [`examples/forged-agents/vendor-vetting/`](../examples/forged-agents/vendor-vetting) (all 5 files)
 
 ## 1. A morning digest skill
 

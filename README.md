@@ -154,6 +154,11 @@ $EDITOR ~/.tq-forge/context.md   # who you are, what you build, your hard rules
 `/tq-forge-promote`, and it re-scores first — so a stale score can never sneak a
 weak artifact into production.
 
+> 📖 Full architecture, scoring model, and file layout: **[docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md)**.
+> See real generated output in **[`examples/`](examples/)** — a forged skill
+> ([github-pr-digest](examples/forged-skills/github-pr-digest/SKILL.md)) and a
+> forged 5-file agent ([vendor-vetting](examples/forged-agents/vendor-vetting)).
+
 ### The scorer
 
 `scripts/quality-score.sh` is a static, **token-free** heuristic (pure Python

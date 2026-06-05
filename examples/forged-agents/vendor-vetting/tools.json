@@ -1,0 +1,7 @@
+{
+  "tools": ["WebSearch", "WebFetch", "Read"],
+  "hand_off_to": [
+    {"name": "business-analyst", "when": "the vetting passes and the deal needs pricing/margin framing"},
+    {"name": "reviewer", "when": "a borderline CAUTION verdict needs a skeptical second pass"}
+  ]
+}

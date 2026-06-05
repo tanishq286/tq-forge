@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **Auto-publish workflow** — `.github/workflows/publish.yml` publishes to npm
+  (with provenance) on every GitHub Release; guards that the tag matches
+  `package.json`. Needs an `NPM_TOKEN` repo secret.
+- **`docs/HOW_IT_WORKS.md`** — architecture, scoring model, and state layout.
+- **Real example artifacts** under `examples/` — a forged skill
+  (`github-pr-digest`) and a forged 5-file agent (`vendor-vetting`).
 - **npm installer** — `npx tq-forge install` copies the skills into
   `~/.claude/skills/` and support scripts into `~/.tq-forge/install/`, seeds the
   state home, and checks dependencies. Also `uninstall` and `doctor` subcommands.
