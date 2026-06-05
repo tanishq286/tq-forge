@@ -7,6 +7,7 @@
 Forge new slash-command skills and multi-file agents from a one-line intent —
 scored, sandboxed, and promoted into production without leaving your terminal.
 
+[![npm](https://img.shields.io/npm/v/tq-forge?color=cb3837&logo=npm)](https://www.npmjs.com/package/tq-forge)
 [![CI](https://github.com/tanishq286/tq-forge/actions/workflows/ci.yml/badge.svg)](https://github.com/tanishq286/tq-forge/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-d97757)](https://claude.com/claude-code)
@@ -64,17 +65,36 @@ You:  /tq-forge a skill that summarizes my open GitHub PRs every morning
 
 ## Install
 
-tq-forge is a standard Claude Code plugin marketplace. Inside Claude Code:
+Two ways — pick whichever fits your setup.
+
+### Option A — npm (one command)
+
+```bash
+npx tq-forge install
+```
+
+This copies the 13 skills into `~/.claude/skills/`, drops the support scripts in
+`~/.tq-forge/install/`, seeds your state home, and checks for `bash`/`python3`.
+Then restart Claude Code. Verify any time with `npx tq-forge doctor`.
+
+```bash
+npx tq-forge doctor      # check the install + deps
+npx tq-forge uninstall   # remove skills (keeps your forged data)
+```
+
+### Option B — Claude Code plugin marketplace
 
 ```
 /plugin marketplace add tanishq286/tq-forge
 /plugin install tq-forge@tq-forge
 ```
 
-Then restart Claude Code (or reload skills). Verify with `/tq-forge-status`.
+Then restart Claude Code (or reload skills) and verify with `/tq-forge-status`.
 
 > **Requirements:** Claude Code, `bash`, and `python3` (standard library only —
-> no pip installs).
+> no pip installs). Skills work identically whether installed via npm or as a
+> plugin — they resolve their scripts from `$CLAUDE_PLUGIN_ROOT` when loaded as a
+> plugin, and from `~/.tq-forge/install` otherwise.
 
 ### First-run setup (30 seconds)
 

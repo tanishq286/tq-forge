@@ -21,7 +21,7 @@ what's queued, and is forge currently paused?
 
 ```bash
 export TQ_FORGE_HOME="${TQ_FORGE_HOME:-$HOME/.tq-forge}"
-S="$CLAUDE_PLUGIN_ROOT/scripts"
+S="${CLAUDE_PLUGIN_ROOT:-${TQ_FORGE_HOME:-$HOME/.tq-forge}/install}/scripts"
 source "$S/common.sh" && tq_ensure_home
 ```
 

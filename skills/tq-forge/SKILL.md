@@ -26,12 +26,12 @@ you run `/tq-forge-promote <slug>`.
 
 ## Procedure
 
-Scripts live at `$CLAUDE_PLUGIN_ROOT/scripts`. State lives at
+Scripts live at `${CLAUDE_PLUGIN_ROOT:-${TQ_FORGE_HOME:-$HOME/.tq-forge}/install}/scripts`. State lives at
 `${TQ_FORGE_HOME:-$HOME/.tq-forge}`. Initialize both up front:
 
 ```bash
 export TQ_FORGE_HOME="${TQ_FORGE_HOME:-$HOME/.tq-forge}"
-S="$CLAUDE_PLUGIN_ROOT/scripts"
+S="${CLAUDE_PLUGIN_ROOT:-${TQ_FORGE_HOME:-$HOME/.tq-forge}/install}/scripts"
 source "$S/common.sh" && tq_ensure_home
 ```
 

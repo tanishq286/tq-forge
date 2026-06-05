@@ -24,7 +24,7 @@ the classifier entirely.
 
 ```bash
 export TQ_FORGE_HOME="${TQ_FORGE_HOME:-$HOME/.tq-forge}"
-S="$CLAUDE_PLUGIN_ROOT/scripts"
+S="${CLAUDE_PLUGIN_ROOT:-${TQ_FORGE_HOME:-$HOME/.tq-forge}/install}/scripts"
 source "$S/common.sh" && tq_ensure_home
 ```
 
@@ -50,7 +50,7 @@ source "$S/common.sh" && tq_ensure_home
    mkdir -p "$SANDBOX_SKILLS/<slug>"
    ```
 
-5. **Compose the SKILL.md** using `$CLAUDE_PLUGIN_ROOT/templates/SKILL.md.tmpl`
+5. **Compose the SKILL.md** using `${CLAUDE_PLUGIN_ROOT:-${TQ_FORGE_HOME:-$HOME/.tq-forge}/install}/templates/SKILL.md.tmpl`
    as the shape: frontmatter (`name`, `description` with "Use when…",
    `allowed-tools`), `## When to use` (2-3 sentences), `## Procedure`
    (numbered, copy-pasteable commands), `## Pitfalls` (real ones),

@@ -27,7 +27,7 @@ is the only path that moves it into production.
 
 ```bash
 export TQ_FORGE_HOME="${TQ_FORGE_HOME:-$HOME/.tq-forge}"
-S="$CLAUDE_PLUGIN_ROOT/scripts"; T="$CLAUDE_PLUGIN_ROOT/templates/agent-templates"
+S="${CLAUDE_PLUGIN_ROOT:-${TQ_FORGE_HOME:-$HOME/.tq-forge}/install}/scripts"; T="${CLAUDE_PLUGIN_ROOT:-${TQ_FORGE_HOME:-$HOME/.tq-forge}/install}/templates/agent-templates"
 source "$S/common.sh" && tq_ensure_home
 ```
 

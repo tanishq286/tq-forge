@@ -3,6 +3,18 @@
 All notable changes to tq-forge are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+- **npm installer** — `npx tq-forge install` copies the skills into
+  `~/.claude/skills/` and support scripts into `~/.tq-forge/install/`, seeds the
+  state home, and checks dependencies. Also `uninstall` and `doctor` subcommands.
+- Skills are now **dual-mode**: they resolve their scripts from
+  `$CLAUDE_PLUGIN_ROOT` when loaded as a Claude Code plugin, or from
+  `~/.tq-forge/install` when installed via npm — same SKILL.md either way.
+- CI now syntax-checks the CLI, runs `npm pack`, and smoke-tests an isolated
+  install.
+
 ## [1.0.0] — 2026-06-04
 
 First public release.

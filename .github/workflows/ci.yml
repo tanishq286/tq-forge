@@ -20,6 +20,25 @@ jobs:
         run: |
           python3 -c "import json; json.load(open('.claude-plugin/plugin.json'))"
           python3 -c "import json; json.load(open('.claude-plugin/marketplace.json'))"
+          python3 -c "import json; json.load(open('package.json'))"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check CLI syntax + npm pack
+        run: |
+          node --check bin/cli.js
+          node bin/cli.js --version
+          npm pack --dry-run
+
+      - name: CLI install smoke test (isolated dirs)
+        run: |
+          export TQ_FORGE_HOME="$RUNNER_TEMP/tqhome"
+          export CLAUDE_SKILLS_DIR="$RUNNER_TEMP/skills"
+          node bin/cli.js install
+          node bin/cli.js doctor
 
       - name: Score every bundled skill (must be >= 7)
         run: |

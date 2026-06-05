@@ -23,7 +23,7 @@ counterpart of `/tq-forge-list`, which mixes skills + agents.
 
 ```bash
 export TQ_FORGE_HOME="${TQ_FORGE_HOME:-$HOME/.tq-forge}"
-source "$CLAUDE_PLUGIN_ROOT/scripts/common.sh" && tq_ensure_home
+source "${CLAUDE_PLUGIN_ROOT:-${TQ_FORGE_HOME:-$HOME/.tq-forge}/install}/scripts/common.sh" && tq_ensure_home
 ```
 
 1. **Enumerate agent directories.**

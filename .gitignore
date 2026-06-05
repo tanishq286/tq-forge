@@ -10,6 +10,11 @@ Thumbs.db
 .idea/
 .vscode/
 
+# Node
+node_modules/
+*.tgz
+npm-debug.log*
+
 # Python
 __pycache__/
 *.pyc

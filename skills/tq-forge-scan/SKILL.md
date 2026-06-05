@@ -22,7 +22,7 @@ have been forged already. Or you want a coverage report before a forge spree.
 
 ```bash
 export TQ_FORGE_HOME="${TQ_FORGE_HOME:-$HOME/.tq-forge}"
-source "$CLAUDE_PLUGIN_ROOT/scripts/common.sh" && tq_ensure_home
+source "${CLAUDE_PLUGIN_ROOT:-${TQ_FORGE_HOME:-$HOME/.tq-forge}/install}/scripts/common.sh" && tq_ensure_home
 ```
 
 1. **Enumerate every installed skill.**
