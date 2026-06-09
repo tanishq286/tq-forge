@@ -1,0 +1,25 @@
+name: Scorer feedback
+description: A score that feels wrong — too high, too low, or missing a signal
+labels: [scorer-heuristics]
+body:
+  - type: textarea
+    id: artifact
+    attributes:
+      label: The artifact (or a minimal version of it)
+      description: Paste the SKILL.md (or describe the agent) that got the surprising score.
+    validations:
+      required: true
+  - type: input
+    id: score
+    attributes:
+      label: Score it received
+      placeholder: "e.g. 7.8/10, specificity 4"
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why the score feels wrong
+      description: Which dimension, and what signal should the static rubric have caught?
+    validations:
+      required: true

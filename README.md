@@ -16,7 +16,7 @@ scored, sandboxed, and promoted into production without leaving your terminal.
 
 <br/>
 
-<img src="assets/demo.svg" alt="tq-forge demo: forging a skill and scoring it" width="760"/>
+<img src="assets/demo.gif" alt="tq-forge demo: the deterministic scorer passing a 9.0 and a 7.8, then blocking a 3.2 at the promote gate" width="760"/>
 
 </div>
 
@@ -199,6 +199,19 @@ stdlib). It never makes an LLM call, so scoring is free and deterministic.
 
 `scripts/dry-test.sh` adds structural validation (frontmatter, the 5 agent files,
 valid `tools.json`, word-count bounds).
+
+### Use the scorer on its own
+
+The scorer doesn't need the forge. Point it at anything shaped like a skill —
+including in CI, where it's free because it never calls an API:
+
+```bash
+bash ~/.tq-forge/install/scripts/quality-score.sh ~/.claude/skills/<your-skill>
+bash scripts/quality-score.sh --json <path>     # machine-readable, for pipelines
+```
+
+tq-forge's own CI does exactly this: every push re-scores the bundled skills and
+fails the build below 7/10.
 
 ## Configuration
 

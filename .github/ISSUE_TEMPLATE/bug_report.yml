@@ -1,0 +1,29 @@
+name: Bug report
+description: Something broke during install, forge, score, or promote
+labels: [bug]
+body:
+  - type: input
+    id: command
+    attributes:
+      label: Command that failed
+      placeholder: "npx tq-forge install · /tq-forge <intent> · quality-score.sh <path>"
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Full output (paste verbatim)
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      placeholder: "OS / WSL?, bash --version, python3 --version, node --version"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
