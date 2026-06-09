@@ -35,11 +35,12 @@ jobs:
                     2>/dev/null || echo "?")
           VIEWS=$(gh api "repos/$R/traffic/views" --jq .count 2>/dev/null || echo "?")
           UNIQ=$(gh api "repos/$R/traffic/views" --jq .uniques 2>/dev/null || echo "?")
-          MSG="🔨 tq-forge digest
-⭐ ${STARS} stars (+${NEW24} in 24h)
-👁 ${VIEWS} views / ${UNIQ} uniques (14d)
-🍴 ${FORKS} forks · 🐛 ${OPEN} open issues
-https://github.com/${R}"
+          MSG=$(printf '%s\n' \
+            "🔨 tq-forge digest" \
+            "⭐ ${STARS} stars (+${NEW24} in 24h)" \
+            "👁 ${VIEWS} views / ${UNIQ} uniques (14d)" \
+            "🍴 ${FORKS} forks · 🐛 ${OPEN} open issues" \
+            "https://github.com/${R}")
           curl -fsS "https://api.telegram.org/bot$TG_TOKEN/sendMessage" \
             --data-urlencode chat_id="$TG_CHAT" \
             --data-urlencode text="$MSG" >/dev/null
