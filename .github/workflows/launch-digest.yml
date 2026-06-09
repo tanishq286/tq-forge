@@ -1,0 +1,46 @@
+# Twice-daily repo pulse to Telegram (09:00 & 21:00 IST) while AWAY_MODE=1.
+# Manual test any time: gh workflow run launch-digest.yml --repo tanishq286/tq-forge
+# Soft-skips when Telegram secrets are absent; never fails red.
+name: Launch digest
+on:
+  schedule:
+    - cron: "30 3,15 * * *"   # 03:30 & 15:30 UTC = 09:00 & 21:00 IST
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  digest:
+    if: vars.AWAY_MODE == '1' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TG_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+      TG_CHAT: ${{ secrets.TG_CHAT_ID }}
+    steps:
+      - name: Build and send digest
+        run: |
+          set -e
+          if [ -z "${TG_TOKEN:-}" ] || [ -z "${TG_CHAT:-}" ]; then
+            echo "Telegram secrets not set — skipping send."; exit 0
+          fi
+          R="${{ github.repository }}"
+          STARS=$(gh api "repos/$R" --jq .stargazers_count)
+          FORKS=$(gh api "repos/$R" --jq .forks_count)
+          OPEN=$(gh api "repos/$R/issues?state=open&per_page=100" --jq length)
+          NEW24=$(gh api -H "Accept: application/vnd.github.star+json" \
+                    "repos/$R/stargazers?per_page=100" --paginate \
+                    --jq '[.[] | select(.starred_at > (now - 86400 | todate))] | length' \
+                    2>/dev/null || echo "?")
+          VIEWS=$(gh api "repos/$R/traffic/views" --jq .count 2>/dev/null || echo "?")
+          UNIQ=$(gh api "repos/$R/traffic/views" --jq .uniques 2>/dev/null || echo "?")
+          MSG="🔨 tq-forge digest
+⭐ ${STARS} stars (+${NEW24} in 24h)
+👁 ${VIEWS} views / ${UNIQ} uniques (14d)
+🍴 ${FORKS} forks · 🐛 ${OPEN} open issues
+https://github.com/${R}"
+          curl -fsS "https://api.telegram.org/bot$TG_TOKEN/sendMessage" \
+            --data-urlencode chat_id="$TG_CHAT" \
+            --data-urlencode text="$MSG" >/dev/null
+          echo "digest sent."

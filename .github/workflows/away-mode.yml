@@ -1,0 +1,72 @@
+# Away-mode: transparent auto-acknowledgement + Telegram pings while the
+# maintainer is unavailable. Fully inert unless the repo variable AWAY_MODE=1.
+#   arm:    gh variable set AWAY_MODE  --body 1 --repo tanishq286/tq-forge
+#           gh variable set AWAY_UNTIL --body "June 20, 2026" --repo tanishq286/tq-forge
+#   disarm: gh variable set AWAY_MODE  --body 0 --repo tanishq286/tq-forge
+name: Away mode
+on:
+  issues:
+    types: [opened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  issues: write
+
+jobs:
+  # Honest, clearly-labeled automated first response on new issues.
+  acknowledge:
+    if: vars.AWAY_MODE == '1' && github.event_name == 'issues'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        env:
+          AWAY_UNTIL: ${{ vars.AWAY_UNTIL }}
+        with:
+          script: |
+            const until = process.env.AWAY_UNTIL || 'shortly';
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: [
+                'Thanks for opening this! 🙏',
+                '',
+                `Heads-up: I'm away with limited connectivity until **${until}**, so a real reply may take a few days — but this issue is logged and will be triaged first thing when I'm back.`,
+                '',
+                'In the meantime, the most helpful additions: for a **bug**, the full command output plus `bash --version`, `python3 --version`, and your OS; for **scorer feedback**, the artifact plus the score it received.',
+                '',
+                '_(automated acknowledgement — every issue gets a human reply on my return)_'
+              ].join('\n')
+            });
+            try {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                labels: ['triage']
+              });
+            } catch (e) { core.warning(`labeling skipped: ${e.message}`); }
+
+  # Near-real-time Telegram ping on new issues and human comments.
+  # Soft-skips when Telegram secrets are absent; never fails red.
+  notify:
+    if: vars.AWAY_MODE == '1' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Telegram
+        env:
+          TG_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TG_CHAT_ID }}
+          KIND: ${{ github.event_name }}
+          TITLE: ${{ github.event.issue.title }}
+          WHO: ${{ github.actor }}
+          URL: ${{ github.event.issue.html_url }}
+        run: |
+          if [ -z "${TG_TOKEN:-}" ] || [ -z "${TG_CHAT:-}" ]; then
+            echo "Telegram secrets not set — skipping."; exit 0
+          fi
+          LABEL="🆕 new issue"; [ "$KIND" = "issue_comment" ] && LABEL="💬 comment"
+          curl -fsS "https://api.telegram.org/bot$TG_TOKEN/sendMessage" \
+            --data-urlencode chat_id="$TG_CHAT" \
+            --data-urlencode text="$LABEL on tq-forge by $WHO: \"$TITLE\" → $URL" >/dev/null
