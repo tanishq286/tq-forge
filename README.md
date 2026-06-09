@@ -63,33 +63,57 @@ You:  /tq-forge a skill that summarizes my open GitHub PRs every morning
 - **Self-curating.** `/tq-forge-improve` rewrites only the weak sections;
   `/tq-forge-scan` finds workflows you keep doing by hand that should be skills.
 
+## How it compares
+
+Most ways to make a Claude Code skill are either blank-page guesswork or a
+one-shot LLM generation you can't measure. tq-forge puts a **deterministic
+quality gate** between "generated" and "live."
+
+| | Hand-writing | Ask Claude inline | **tq-forge** |
+|---|:---:|:---:|:---:|
+| Scaffolds the correct file shape | ✗ | partial | ✓ |
+| Scores structural quality (0–10) | ✗ | ✗ | ✓ |
+| Cost to score an artifact | — | tokens | **0 tokens** (static Python) |
+| Same input → same score | — | ✗ | ✓ deterministic |
+| Sandbox before it touches live skills | ✗ | ✗ | ✓ mandatory |
+| Re-score gate on promote (≥ 7/10) | ✗ | ✗ | ✓ |
+| Rewrites only the weak sections | ✗ | partial | ✓ |
+| Flags workflows you should turn into skills | ✗ | ✗ | ✓ |
+
+The thing nothing else here ships is the **token-free deterministic scorer**:
+every artifact gets the same 0–10 structural read, every time, for free — and
+nothing reaches `~/.claude/skills/` until a re-score passes the gate.
+
+> *It scores **structure**, not correctness — it catches missing sections and
+> vagueness, not logic bugs. Always read what you promote.*
+
 ## Install
-
-Two ways — pick whichever fits your setup.
-
-### Option A — npm (one command)
 
 ```bash
 npx tq-forge install
 ```
 
-This copies the 13 skills into `~/.claude/skills/`, drops the support scripts in
-`~/.tq-forge/install/`, seeds your state home, and checks for `bash`/`python3`.
-Then restart Claude Code. Verify any time with `npx tq-forge doctor`.
+One command. It copies the 13 skills into `~/.claude/skills/`, drops the support
+scripts in `~/.tq-forge/install/`, seeds your state home, and checks for
+`bash`/`python3`. Restart Claude Code and you're done.
 
 ```bash
 npx tq-forge doctor      # check the install + deps
 npx tq-forge uninstall   # remove skills (keeps your forged data)
 ```
 
-### Option B — Claude Code plugin marketplace
+<details>
+<summary><strong>Prefer the Claude Code plugin marketplace?</strong></summary>
+
+<br/>
 
 ```
 /plugin marketplace add tanishq286/tq-forge
 /plugin install tq-forge@tq-forge
 ```
 
-Then restart Claude Code (or reload skills) and verify with `/tq-forge-status`.
+Restart Claude Code (or reload skills) and verify with `/tq-forge-status`.
+</details>
 
 > **Requirements:** Claude Code, `bash`, and `python3` (standard library only —
 > no pip installs). Skills work identically whether installed via npm or as a
@@ -215,6 +239,12 @@ re-score it.
 **Is the scorer the final word on quality?** It's a structural floor, not a
 ceiling. It catches missing sections and vagueness; it can't judge whether your
 procedure is *correct*. Always read what you promote.
+
+## Star this repo
+
+If tq-forge saves you from hand-writing even one skill, a ⭐ helps the next
+person find it — and tells me which heuristics to sharpen next. That's the whole
+ask: no newsletter, no account, no telemetry.
 
 ## Contributing
 
