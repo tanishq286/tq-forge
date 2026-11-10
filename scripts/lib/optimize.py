@@ -498,8 +498,10 @@ def preview(root, writes):
             shutil.copy2(root / name, scratch / name)
     for name in ("skills", "agents", "rules"):
         if (root / ".claude" / name).is_dir():
-            shutil.copytree(root / ".claude" / name, scratch / ".claude" / name,
-                            ignore_dangling_symlinks=True)
+            try:
+                shutil.copytree(root / ".claude" / name, scratch / ".claude" / name)
+            except shutil.Error:
+                pass  # copytree copies everything it can, then reports dangling links
     for name in (SETTINGS, ".claude/CLAUDE.md"):
         if (root / name).is_file():
             (scratch / ".claude").mkdir(exist_ok=True)

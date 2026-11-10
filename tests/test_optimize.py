@@ -261,6 +261,12 @@ class HostileInputTest(ProjectCase):
         (self.root / ".claude" / "CLAUDE.md").write_text("# Team notes\n\nPrefer small commits.\n")
         (self.root / ".claude" / "projects").mkdir()
         (self.root / ".claude" / "projects" / "transcript.jsonl").write_text("{}\n" * 1000)
+        shared = self.root / ".agents" / "skills" / "linked"
+        shared.mkdir(parents=True)
+        (shared / "SKILL.md").write_text("---\nname: linked\ndescription: Linked skill. Use when asked.\n---\n\nBody line.\n")
+        (self.root / ".claude" / "skills" / "linked").symlink_to(pathlib.Path("..", "..", ".agents", "skills", "linked"))
+        (self.root / ".claude" / "skills" / "dangling").symlink_to(pathlib.Path("..", "..", "missing"))
+        self.assertTrue(run_optimize(self.root, None)["nothing_lost"]["ok"])
         scratch = optimize.preview(self.root, {})
         self.addCleanup(shutil.rmtree, scratch, True)
         self.assertEqual(context_cost.measure(scratch)["parts"], context_cost.measure(self.root)["parts"])
