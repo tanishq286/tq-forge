@@ -1,0 +1,3 @@
+# Verifying changes
+
+When you change code that can be run, built, or type-checked, run a real check that exercises the change before reporting it done: the project's tests, type-checker, or build, or the changed command itself. A syntax-only check, or a check command that failed to start, does not count. If all that is missing is the project's declared dependencies, install them with its own package manager and lockfile, never with sudo or the system package manager, unless told not to. Only if no real check can run here, say which one you did not run and why instead of reporting the change as done.

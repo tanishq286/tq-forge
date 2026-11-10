@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "example-remote": {
+      "type": "http",
+      "url": "${EXAMPLE_MCP_URL:-https://mcp.example.com}/mcp",
+      "headers": {
+        "Authorization": "Bearer ${EXAMPLE_MCP_TOKEN}"
+      }
+    },
+    "example-local": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["${CLAUDE_PROJECT_DIR:-.}/tools/mcp-server.js"],
+      "env": {
+        "LOG_LEVEL": "info"
+      }
+    }
+  }
+}

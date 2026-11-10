@@ -1,10 +1,12 @@
-# Twice-daily repo pulse to Telegram (09:00 & 21:00 IST) while AWAY_MODE=1.
-# Manual test any time: gh workflow run launch-digest.yml --repo tanishq286/tq-forge
-# Soft-skips when Telegram secrets are absent; never fails red.
+# Weekly repo pulse & maintainer digest.
+# Manual trigger: gh workflow run launch-digest.yml --repo tanishq286/tq-forge
+# Triggered weekly on Mondays at 09:00 UTC.
+# Soft-skips Telegram delivery when secrets are not configured; never fails red.
 name: Launch digest
+
 on:
   schedule:
-    - cron: "30 3,15 * * *"   # 03:30 & 15:30 UTC = 09:00 & 21:00 IST
+    - cron: "0 9 * * 1"   # Weekly on Mondays at 09:00 UTC
   workflow_dispatch:
 
 permissions:
@@ -12,37 +14,46 @@ permissions:
 
 jobs:
   digest:
-    if: vars.AWAY_MODE == '1' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       TG_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
       TG_CHAT: ${{ secrets.TG_CHAT_ID }}
     steps:
-      - name: Build and send digest
+      - name: Build and report digest
         run: |
-          set -e
-          if [ -z "${TG_TOKEN:-}" ] || [ -z "${TG_CHAT:-}" ]; then
-            echo "Telegram secrets not set — skipping send."; exit 0
-          fi
+          set -euo pipefail
           R="${{ github.repository }}"
-          STARS=$(gh api "repos/$R" --jq .stargazers_count)
-          FORKS=$(gh api "repos/$R" --jq .forks_count)
-          OPEN=$(gh api "repos/$R/issues?state=open&per_page=100" --jq length)
+          echo "Gathering weekly digest metrics for $R..."
+
+          STARS=$(gh api "repos/$R" --jq .stargazers_count 2>/dev/null || echo "0")
+          FORKS=$(gh api "repos/$R" --jq .forks_count 2>/dev/null || echo "0")
+          OPEN=$(gh api "repos/$R/issues?state=open&per_page=100" --jq length 2>/dev/null || echo "0")
           NEW24=$(gh api -H "Accept: application/vnd.github.star+json" \
                     "repos/$R/stargazers?per_page=100" --paginate \
                     --jq '[.[] | select(.starred_at > (now - 86400 | todate))] | length' \
-                    2>/dev/null || echo "?")
-          # Traffic API needs admin scope GITHUB_TOKEN lacks; show n/a unless numeric
+                    2>/dev/null || echo "0")
           TRAFFIC=$(gh api "repos/$R/traffic/views" --jq '"\(.count)/\(.uniques)"' 2>/dev/null) || TRAFFIC=""
           case "$TRAFFIC" in *[0-9]/[0-9]*) ;; *) TRAFFIC="n/a (needs PAT)";; esac
+
           MSG=$(printf '%s\n' \
-            "🔨 tq-forge digest" \
+            "🔨 tq-forge weekly digest" \
             "⭐ ${STARS} stars (+${NEW24} in 24h)" \
             "👁 views: ${TRAFFIC} (14d)" \
             "🍴 ${FORKS} forks · 🐛 ${OPEN} open issues" \
             "https://github.com/${R}")
+
+          echo "----------------------------------------"
+          echo "$MSG"
+          echo "----------------------------------------"
+
+          if [ -z "${TG_TOKEN:-}" ] || [ -z "${TG_CHAT:-}" ]; then
+            echo "Telegram secrets not set (TG_BOT_TOKEN / TG_CHAT_ID) — skipping notification send."
+            exit 0
+          fi
+
           curl -fsS "https://api.telegram.org/bot$TG_TOKEN/sendMessage" \
             --data-urlencode chat_id="$TG_CHAT" \
-            --data-urlencode text="$MSG" >/dev/null
-          echo "digest sent."
+            --data-urlencode text="$MSG" >/dev/null || echo "Warning: failed to send Telegram message"
+
+          echo "Telegram digest sent successfully."

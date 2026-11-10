@@ -1,63 +1,37 @@
-# Security
+# Security Policy
 
-tq-forge is designed to be safe to install and read end to end. This document
-states exactly what it does and does not do, so you can verify before you trust.
+`tq-forge` is designed from the ground up for safe, transparent, and deterministic operation in developer environments.
 
-## What it does
+## Architecture & Trust Model
 
-- **Generates files** in a sandbox (`~/.tq-forge/sandbox/`) and, on explicit
-  promote, copies them into your Claude Code skills dir (`~/.claude/skills/`).
-- **Reads** your installed skills' frontmatter (for the gap scan) and its own
-  state files under `~/.tq-forge/`.
-- **Runs** small `bash` + `python3` (standard library) scripts to score and
-  validate artifacts.
+- **Zero Outbound Telemetry**: The CLI, scorers, generators, and hooks make zero outbound network calls and send no analytics or telemetry.
+- **Token-Free Scoring**: Artifact quality scoring and linting are performed entirely via local static analysis using Python standard library heuristics.
+- **Execution Sandboxing**: Newly generated skills and subagents are scaffolded into an isolated sandbox (`$TQ_FORGE_HOME/sandbox/`) and never touch active configurations or production repositories until explicitly promoted.
+- **Hook Policy Enforcement**: Scaffolding includes proactive guardrails for Claude Code lifecycle hooks:
+  - `PreToolUse`: blocks dangerous root deletions (`rm -rf /`) and force git pushes (`git push --force`) with `exit 2`.
+  - `PostToolUse`: validates file syntax on write before continuation.
+  - `Stop`: prevents premature session termination if merge conflict markers or unfinished placeholders are detected.
 
-## What it does NOT do
+## Supported Versions
 
-- ❌ **No network calls.** The installer and all runtime scripts are local. The
-  scorer (`quality-score.sh`), validator (`dry-test.sh`), and the npm CLI make
-  zero outbound requests. (`npx` itself downloads the package from npm — that's
-  the npm client, not our code.)
-- ❌ **No telemetry.** Nothing is collected, logged remotely, or phoned home.
-- ❌ **No LLM/API calls in the tooling.** Scoring is static and deterministic.
-- ❌ **No `bypass-permissions` requirement.** The skills use ordinary Bash/Read/
-  Write tools you already grant Claude Code.
-- ❌ **No modification of shared system files.** Everything stays under your home
-  directory (`~/.tq-forge/` and `~/.claude/skills/`).
+| Version | Supported | Status |
+| :--- | :---: | :--- |
+| `1.1.x` | Yes | Current stable release |
+| `1.0.x` | Yes | Legacy maintenance |
+| `< 1.0` | No | Unsupported |
 
-## Scope of writes
+## Reporting a Vulnerability
 
-| Path | Written by | When |
-|---|---|---|
-| `~/.tq-forge/**` | scripts + CLI | install, forge, score |
-| `~/.claude/skills/<slug>/` | `/tq-forge-promote`, `npx tq-forge install` | explicit promote/install |
+If you discover a security vulnerability or security bug in `tq-forge`, please report it responsibly:
 
-`/tq-forge-promote` refuses to overwrite a skill slug that already exists, and
-keeps the sandbox copy as a rollback (it copies, never moves).
+- **Do NOT open a public GitHub issue.**
+- Submit a private advisory via GitHub:
+  **https://github.com/tanishq286/tq-forge/security/advisories/new**
+- Alternatively, contact the maintainer directly at `tanishqagarwal2864@gmail.com` with the subject line `[SECURITY] tq-forge Vulnerability Report`.
 
-## Auditing it yourself
+Please include:
+1. Description of the vulnerability and attack vector.
+2. Steps to reproduce or proof-of-concept configuration.
+3. Impact assessment and potential mitigations.
 
-Everything is plain text. To review before installing:
-
-```bash
-git clone https://github.com/tanishq286/tq-forge
-cd tq-forge
-less scripts/*.sh        # the only executable logic
-less bin/cli.js          # the installer (pure Node stdlib)
-```
-
-The scripts are kept shellcheck-clean (enforced in CI) and dependency-free.
-
-## Reporting a vulnerability
-
-If you find a security issue, please **do not open a public issue**. Instead,
-use GitHub's private vulnerability reporting:
-
-**https://github.com/tanishq286/tq-forge/security/advisories/new**
-
-You'll get an acknowledgement and a fix timeline. Thank you for disclosing
-responsibly.
-
-## Supported versions
-
-The latest released version on the `main` branch / npm `latest` tag is supported.
+You will receive an initial response within 48 hours and regular updates until resolution.

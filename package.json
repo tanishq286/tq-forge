@@ -1,6 +1,6 @@
 {
   "name": "tq-forge",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "An autonomous skill + agent factory for Claude Code. Forge, score, and promote slash-command skills and agents from a one-line intent.",
   "bin": {
     "tq-forge": "bin/cli.js"
@@ -16,18 +16,16 @@
     "CHANGELOG.md"
   ],
   "scripts": {
-    "test": "node bin/cli.js doctor"
+    "test": "python3 scripts/test-runner.py"
   },
   "keywords": [
     "claude-code",
-    "claude",
-    "skills",
-    "agents",
-    "scaffolding",
-    "factory",
-    "ai-agents",
+    "claude-fable-5-2",
     "anthropic",
-    "developer-tools",
+    "ai-agents",
+    "claude-skills",
+    "subagents",
+    "mcp",
     "cli"
   ],
   "author": "tanishq286",
@@ -35,7 +33,7 @@
   "homepage": "https://github.com/tanishq286/tq-forge#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/tanishq286/tq-forge.git"
+    "url": "https://github.com/tanishq286/tq-forge.git"
   },
   "bugs": {
     "url": "https://github.com/tanishq286/tq-forge/issues"

@@ -11,6 +11,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - name: ShellCheck scripts
         uses: ludeeus/action-shellcheck@master
         with:
@@ -21,6 +26,7 @@ jobs:
           python3 -c "import json; json.load(open('.claude-plugin/plugin.json'))"
           python3 -c "import json; json.load(open('.claude-plugin/marketplace.json'))"
           python3 -c "import json; json.load(open('package.json'))"
+          python3 -c "import json; json.load(open('templates/models.json'))"
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -32,6 +38,9 @@ jobs:
           node --check bin/cli.js
           node bin/cli.js --version
           npm pack --dry-run
+
+      - name: Run automated test suite & scorer benchmarks
+        run: npm test
 
       - name: CLI install smoke test (isolated dirs)
         run: |

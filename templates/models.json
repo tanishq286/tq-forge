@@ -1,0 +1,35 @@
+{
+  "_comment": "Target-model profiles used by scaffold.sh and the model-compat lint. 'effort' is the starting level the generators write into frontmatter; 'snippets' are prompt blocks from templates/snippets/ appended to generated subagent prompts.",
+  "default": "claude-fable-5-2",
+  "models": {
+    "claude-fable-5-2": {
+      "alias": "fable",
+      "label": "Claude Fable 5.2",
+      "role": "Orchestrator and advisor for the hardest reasoning and long unattended agentic runs",
+      "effort": "high",
+      "snippets": ["finishing-work", "progress-updates", "communicating-clearly"]
+    },
+    "claude-opus-5-5": {
+      "alias": "opus",
+      "label": "Claude Opus 5.5",
+      "role": "Default for most coding and agentic work",
+      "effort": "medium",
+      "snippets": ["communicating-clearly"]
+    },
+    "claude-sonnet-5-5": {
+      "alias": "sonnet",
+      "label": "Claude Sonnet 5.5",
+      "role": "Fast everyday coding, multistep tool use, and worker subagents",
+      "effort": "medium",
+      "snippets": ["verify-changes"]
+    },
+    "claude-haiku-5-5": {
+      "alias": "haiku",
+      "label": "Claude Haiku 5.5",
+      "role": "Cheap, fast, high-volume worker for narrow well-specified tasks",
+      "effort": "medium",
+      "snippets": ["keep-working", "verify-changes"]
+    }
+  },
+  "effort_levels": ["low", "medium", "high", "xhigh", "max"]
+}
