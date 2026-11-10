@@ -44,6 +44,7 @@ class Checks:
         self.passed = 0
         self.total = 0
         self.issues = []
+        self.warnings = []
 
     def check(self, label, ok, hint=""):
         self.total += 1
@@ -153,6 +154,12 @@ def check_subagent(path, checks):
     checks.check("tools list not empty",
                  not declared_tools or bool(frontmatter.as_list(fields.get("tools") or fields.get("allowed-tools") or fields.get("allowedTools"))),
                  "a subagent whose tools resolve to nothing fails to launch")
+    # Accepted so older files keep passing, but Claude Code only reads `tools` in
+    # a subagent file and silently ignores the skill-style spellings.
+    for alias in ("allowed-tools", "allowedTools"):
+        if alias in fields:
+            checks.warnings.append(
+                f"`{alias}` is a skill field; in a subagent Claude Code reads `tools` and ignores this")
     words = len(body.split())
     checks.check(f"system prompt >= {MIN_SUBAGENT_PROMPT_WORDS} words",
                  words >= MIN_SUBAGENT_PROMPT_WORDS, f"got {words}")
@@ -162,7 +169,8 @@ def _literal_secrets(server):
     """Names of header/env entries that hold a literal value for a secret-looking key."""
     leaked = []
     for section in ("headers", "env"):
-        for key, value in (server.get(section) or {}).items():
+        entries = server.get(section)
+        for key, value in (entries.items() if isinstance(entries, dict) else ()):
             if schema.looks_like_secret_key(key) and "${" not in str(value):
                 leaked.append(f"{section}.{key}")
     return leaked
@@ -295,7 +303,7 @@ def main(argv):
     payload = {
         "kind": kind, "target": str(target),
         "checks_passed": checks.passed, "checks_total": checks.total,
-        "score": score, "verdict": verdict, "issues": checks.issues, "warnings": [],
+        "score": score, "verdict": verdict, "issues": checks.issues, "warnings": checks.warnings,
     }
 
     if json_out:
@@ -305,6 +313,8 @@ def main(argv):
         print(f"{emoji} {kind} dry-test: {checks.passed}/{checks.total} ({score}/10) — {verdict}")
         for issue in checks.issues:
             print(f"   ❌ {issue}")
+        for warning in checks.warnings:
+            print(f"   ⚠ {warning}")
     return 0
 
 

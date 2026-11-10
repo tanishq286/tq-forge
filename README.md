@@ -12,6 +12,7 @@ scored deterministically, sandboxed safely, and promoted into production without
 [![CI](https://github.com/tanishq286/tq-forge/actions/workflows/ci.yml/badge.svg)](https://github.com/tanishq286/tq-forge/actions/workflows/ci.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/tanishq286/tq-forge/badge)](https://scorecard.dev/viewer/?site=github.com/tanishq286/tq-forge)
 [![Claude Fable 5.2 Ready](https://img.shields.io/badge/Claude%20Fable%205.2-Ready-8A2BE2.svg)](https://claude.com/claude-code)
+[![Context optimizer](https://img.shields.io/badge/context%20optimizer-%E2%89%A540%25%20on%20benchmark%20fixture-brightgreen.svg)](#context-optimizer)
 
 <br/>
 
@@ -27,21 +28,21 @@ Claude Code enables developers to define reusable **skills** (`.claude/skills/<n
 
 **`tq-forge` is an autonomous maintainer factory and static quality engine.** From a single English intent, it determines the right abstraction, generates fully conformant artifacts into a sandbox, validates them with a **token-free deterministic quality scorer (0–100)**, and ensures nothing reaches production until it meets rigorous thresholds.
 
-```
-You:  /tq-forge an isolated security auditor for checking pull request diffs
+```console
+$ npx tq-forge scaffold agent --template security-auditor --out .
+wrote .claude/agents/security-auditor.md
+next: quality-score.sh .claude/agents/security-auditor.md
 
-      → classified: isolated subagent
-      → template: security-auditor (claude-opus-5-5, effort: high)
-      → isolation: worktree, permissionMode: plan, memory: project
-      → written to ~/.tq-forge/sandbox/project/.claude/agents/security-auditor.md
-      🟢 subagent security-auditor.md: 90/100 (9.0/10, excellent)
-         clarity            9  █████████░
-         actionability      9  █████████░
-         completeness       9  █████████░
-         specificity        9  █████████░
-         consistency        9  █████████░
-      → Next: /tq-forge-promote security-auditor
+$ npx tq-forge score .claude/agents/security-auditor.md
+🟢 subagent security-auditor.md: 90/100 (9.0/10, excellent)
+   clarity             9  █████████░
+   actionability       9  █████████░
+   completeness        9  █████████░
+   specificity         9  █████████░
+   consistency         9  █████████░
 ```
+
+The same engine also shrinks what Claude Code loads on every turn. See [Context optimizer](#context-optimizer).
 
 ---
 
@@ -91,13 +92,21 @@ You:  /tq-forge an isolated security auditor for checking pull request diffs
 
 ### 2. Isolated Subagents
 - Supports `isolation: worktree` so subagents operate inside temporary, pristine git worktrees without polluting the main working tree.
-- Configurable `permissionMode` (`plan`, `acceptEdits`), `allowed-tools`, and `memory: project` for context retention across turns.
+- Configurable `permissionMode` (`plan`, `acceptEdits`), `tools`, and `memory: project` for notes that persist across sessions. (Subagent files use `tools`; `allowed-tools` is the skill field, and `validate` warns when it appears in a subagent.)
+- A worktree starts from the repository's default branch, so uncommitted changes are not visible in it. Give the subagent a commit or branch to work on, or set `worktree.baseRef` to `head`.
 
 ### 3. Lifecycle Hooks Generation (`.claude/hooks/`)
 - Deterministic hooks for `PreToolUse`, `PostToolUse`, `SessionStart`, and `Stop`.
 - Strict exit code semantics:
-  - **`exit 0` (Allow)**: Normal execution continues.
-  - **`exit 2` (Block)**: Rejects execution and prints feedback on `stderr` directly into Claude's context.
+  - **`exit 0`**: continue.
+  - **`exit 2`**: what it does depends on the event, as Claude Code defines it:
+
+    | Event | Exit 2 blocks? | Who sees stderr |
+    | :--- | :---: | :--- |
+    | `PreToolUse` | Yes, the tool call | Claude |
+    | `PostToolUse` | No, the tool already ran | Claude |
+    | `Stop` | Yes, Claude keeps working | Claude |
+    | `SessionStart` | No | Only you |
 - Guardrails:
   - Blocks dangerous shell operations (`rm -rf /`, `git push --force`).
   - Automatically syntax-checks changed files (`.json`, `.sh`, `.py`, `.js`) on edit or write.
@@ -107,6 +116,53 @@ You:  /tq-forge an isolated security auditor for checking pull request diffs
 ### 4. MCP Server Scaffolding (`.mcp.json`)
 - **Project-scoped MCP servers**: In `.mcp.json` with `http` or `stdio` transports, argument passing, and clean `${VAR}` environment variable expansion.
 - **Subagent-scoped MCP servers**: Isolates heavy toolkits (e.g. SQLite, GitHub, Kubernetes) into dedicated subagents so tool definitions do not consume the main conversation context.
+
+---
+
+## Context optimizer
+
+Claude Code loads some text into the main conversation before your first prompt and resends it every turn: `CLAUDE.md`, rules without a `paths:` scope, every skill's description, every subagent's description, and each MCP server's tool names and instructions. `tq-forge optimize` moves that text to places that load on demand. It deletes nothing.
+
+| Step | What it changes | When the moved text loads afterwards |
+| :--- | :--- | :--- |
+| `optimize-mcp` | Each server in `.mcp.json` moves into `.claude/agents/mcp-<name>.md` (inline `mcpServers:`, `claude-haiku-5-5`) | When Claude delegates to that worker |
+| `optimize-skills` | Descriptions over 160 characters are cut to whole sentences, keeping the "Use when" sentence when it fits in 160 characters (a single longer sentence is cut with "…"); the full text moves into the skill body. Reference sections of skills over 150 lines move to `reference.md` | When the skill is invoked |
+| `optimize-skills` | `CLAUDE.md` sections (in files over 80 lines) that name paths existing in the repo move to `.claude/rules/<topic>.md` with `paths:` | When Claude reads a matching file |
+| `shield` | Adds `claudeMdExcludes` and `permissions.deny` entries for build output and `.env` files, two Haiku "soaker" subagents that return summaries of 15 lines or fewer, and a short context-hygiene rule | — |
+
+```bash
+npx tq-forge measure                  # estimate the always-loaded context
+npx tq-forge optimize                 # dry run: plan and before/after estimate
+npx tq-forge optimize --apply         # write; originals go to .tq-forge-backup/
+npx tq-forge shield --apply
+npx tq-forge restore                  # undo
+```
+
+### Benchmark
+
+`npm test` builds two projects and asserts the result. Tokens are **estimated as characters ÷ 4**; run `/context` in Claude Code for real counts.
+
+| Always-loaded context (est. tokens) | Before | After |
+| :--- | ---: | ---: |
+| `CLAUDE.md` (200 lines, five path-specific sections) | 3,709 | 50 |
+| Skill listings (six skills, ~680-character descriptions) | 1,038 | 255 |
+| MCP tool names and instructions (five servers, 30 tools each) | 2,590 | 0 |
+| Subagent listings (five new `mcp-*` workers) | 0 | 165 |
+| **Total, bloated fixture** | **7,337** | **470 (−93.6%)** |
+| **Total, lean control project** | — | **no change (0%)** |
+
+The test asserts a reduction of at least 40% on the bloated fixture, with and without counting MCP, and that every instruction line and every MCP server is still present afterwards.
+
+### What this does and does not show
+
+- The numbers are for a deliberately bloated synthetic project. A lean project gets nothing; yours will land in between.
+- It measures the fixed context sent each turn. It does not measure your total token use or your usage limits, which also depend on the conversation, tool output, and the model's replies.
+- MCP savings are counted only when you pass `--mcp-inventory` with each server's tool names and instructions, because those come from the server and not from `.mcp.json`. Claude Code's MCP tool search already defers full tool schemas by default, so isolation removes names and instructions, not schemas.
+- These are trade-offs, not free wins. A shorter description gives Claude less to match a skill on. A path-scoped rule is absent until a matching file is read. An isolated MCP server is reached through a Haiku worker that returns a summary. Review the dry run before `--apply`.
+- `--extract-scripts` (moving long shell blocks into `scripts/`) and `shield --strict` / `--subagent-model` are opt-in because they can change behavior.
+- Symlinked files and folders (for example `CLAUDE.md -> AGENTS.md`, or skills linked from `~/.agents/skills`) and files that are not valid UTF-8 are left unchanged and listed as warnings. A server whose name is unsafe in agent frontmatter, or whose worker file name is already taken, stays in `.mcp.json`.
+- `--apply` refuses to write when the preview is missing any line or MCP server that the project had before.
+- `restore` puts back the files that existed before and deletes the files the optimizer created, including edits you made to those created files afterwards.
 
 ---
 
@@ -231,7 +287,7 @@ bash scripts/scaffold.sh mcp --name sqlite-db --command python3 --arg -m --arg s
 npm test
 ```
 
-Executes 225+ assertions testing license compliance, schema rules, frontmatter limits, hook exit-code behavior, dynamic scaffolding, and quality benchmarks.
+Runs two suites: `scripts/test-runner.py` (231 assertions on manifests, frontmatter schemas, hook exit codes, scaffolding from one-line intents, and the 0–100 scorer) and `tests/test_optimize.py` (28 tests on the context optimizer: the before/after benchmark, dry-run and restore safety, and hostile inputs such as colliding server names, symlinks, and non-UTF-8 files).
 
 ---
 
@@ -257,7 +313,8 @@ Executes 225+ assertions testing license compliance, schema rules, frontmatter l
 
 ## Security & Supply Chain Integrity
 
-- **OpenSSF Criticality & Security**: Monitored via automated Scorecard runs in `.github/workflows/scorecard.yml`.
+- **OpenSSF Scorecard**: `.github/workflows/scorecard.yml` publishes the security Scorecard weekly. (The OpenSSF Criticality Score is a separate tool and is not computed here.)
+- **Pinned actions**: every GitHub Action in `.github/workflows/` is pinned to a commit SHA.
 - **Zero Network Calls in Tooling**: Scorer, dry-test, and scaffolding utilities run purely offline with zero external dependencies.
 - **Full Security Policy**: See [SECURITY.md](SECURITY.md).
 - **Responsible Disclosure**: [Report vulnerabilities privately](https://github.com/tanishq286/tq-forge/security/advisories/new).

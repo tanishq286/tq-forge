@@ -15,11 +15,14 @@ Thank you for contributing to `tq-forge`! This project is maintained as a clean,
 Run the full automated test suite and quantitative scorer benchmarks locally:
 
 ```bash
-# Run the complete test suite (225+ assertions)
+# Run the complete test suite: scripts/test-runner.py, then tests/ (unittest)
 npm test
 
-# Run shellcheck across all shell scripts
-npx shellcheck scripts/*.sh templates/hooks/*.sh
+# Run only the context-optimizer tests and print the benchmark line
+python3 -m unittest discover -s tests -v
+
+# Run shellcheck on the scripts (the same command CI runs)
+shellcheck scripts/*.sh
 
 # Run structural dry-test on any skill or subagent
 bash scripts/dry-test.sh skills/tq-forge

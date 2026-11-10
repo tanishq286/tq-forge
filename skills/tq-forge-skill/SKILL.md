@@ -55,6 +55,11 @@ source "$S/common.sh" && tq_ensure_home
    `allowed-tools`), `## When to use` (2-3 sentences), `## Procedure`
    (numbered, copy-pasteable commands), `## Pitfalls` (real ones),
    `## Verification`, `## Tags`. Target 200-800 words.
+   To start from a deterministic stub instead, run
+   `bash "$S/scaffold.sh" skill "<intent>" --model <fable|opus|sonnet|haiku> --effort <level>`
+   and replace every placeholder marker the stub contains. Set `--model` only
+   when the skill needs a specific model; the scorer fails a stub that still
+   has placeholders.
 
 6. **Write it.** Use the Write tool. Path: `$SANDBOX_SKILLS/<slug>/SKILL.md`.
 

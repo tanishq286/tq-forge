@@ -13,14 +13,17 @@
     "skills/",
     "README.md",
     "LICENSE",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "!**/__pycache__/**",
+    "!**/*.pyc"
   ],
   "scripts": {
-    "test": "python3 scripts/test-runner.py"
+    "test": "python3 scripts/test-runner.py && python3 -m unittest discover -s tests"
   },
   "keywords": [
     "claude-code",
     "claude-fable-5-2",
+    "token-optimizer",
     "anthropic",
     "ai-agents",
     "claude-skills",

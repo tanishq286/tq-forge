@@ -19,11 +19,11 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       TG_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
       TG_CHAT: ${{ secrets.TG_CHAT_ID }}
+      R: ${{ github.repository }}
     steps:
       - name: Build and report digest
         run: |
           set -euo pipefail
-          R="${{ github.repository }}"
           echo "Gathering weekly digest metrics for $R..."
 
           STARS=$(gh api "repos/$R" --jq .stargazers_count 2>/dev/null || echo "0")

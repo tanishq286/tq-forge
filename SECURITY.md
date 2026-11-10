@@ -12,6 +12,21 @@
   - `PostToolUse`: validates file syntax on write before continuation.
   - `Stop`: prevents premature session termination if merge conflict markers or unfinished placeholders are detected.
 
+## What the context optimizer writes
+
+`tq-forge optimize` and `tq-forge shield` rewrite existing project files. (`tq-forge scaffold` only adds files, except that `scaffold mcp --scope project` merges new servers into an existing `.mcp.json`.)
+
+- **Dry run by default.** Without `--apply` they print a plan and a before/after estimate and write nothing.
+- **Scope.** With `--apply` they write only inside the `--root` you pass: `.mcp.json`, `CLAUDE.md`, `.claude/settings.json`, `.claude/rules/`, `.claude/agents/`, and the skill folders under `.claude/skills/`.
+- **Backup.** Every file that is changed is first copied to `.tq-forge-backup/`, and the files the optimizer creates are listed in its `manifest.json`. `tq-forge restore` puts the originals back and deletes the created files, including any edits made to those created files afterwards.
+- **Symlinks and encodings.** A file that is a symlink, sits under a symlinked folder, or is not valid UTF-8 is left unchanged and reported as a warning, so nothing is written outside `--root`.
+- **Hostile `.mcp.json`.** A server whose name or keys contain characters other than letters, digits, `_`, `.` and `-` is not moved, so a crafted name cannot add fields such as `permissionMode` to a generated subagent.
+- **No silent loss.** `--apply` stops without writing when the preview is missing any line or MCP server the project had before.
+- **Secrets.** MCP server blocks are moved as written, including `${VAR}` references. The optimizer does not expand environment variables. Because the backup holds a copy of `.mcp.json`, add `.tq-forge-backup/` to `.gitignore` if that file contains literal credentials.
+- **Deny rules.** `shield` adds `permissions.deny` entries for `.env` files and build output (`--strict` adds `node_modules` and lockfiles). It adds to the existing list and never removes an entry.
+
+Review the plan before you run `--apply`.
+
 ## Supported Versions
 
 | Version | Supported | Status |

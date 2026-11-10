@@ -20,7 +20,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execSync } = require('child_process');
+const { execSync, execFileSync, spawnSync } = require('child_process');
 
 const PKG_ROOT = path.resolve(__dirname, '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(PKG_ROOT, 'package.json'), 'utf8'));
@@ -187,8 +187,10 @@ function doctor() {
   // functional smoke test: score one bundled skill
   let scorerOk = false;
   try {
-    const out = execSync(
-      `bash ${JSON.stringify(path.join(INSTALL_DIR, 'scripts', 'quality-score.sh'))} --json ${JSON.stringify(path.join(SKILLS_DIR, 'tq-forge'))}`,
+    // Argument array, no shell: paths with spaces or shell characters stay literal.
+    const out = execFileSync(
+      'bash',
+      [path.join(INSTALL_DIR, 'scripts', 'quality-score.sh'), '--json', path.join(SKILLS_DIR, 'tq-forge')],
       { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
     );
     scorerOk = JSON.parse(out).average >= 7;
@@ -218,6 +220,18 @@ ${c.bold('Commands')}
   doctor      Verify the install and dependencies
   help        Show this help
 
+${c.bold('Forge and score')} ${c.dim('(each takes --help)')}
+  scaffold    Deterministic scaffolds: skill, agent, hooks, mcp, list
+  score       0-100 quality score with model-compat lint
+  validate    Structural check of a skill, subagent, .mcp.json or settings.json
+
+${c.bold('Context optimizer')} ${c.dim('(dry run unless --apply; restore undoes it)')}
+  measure     Estimate the always-loaded context of the current project
+  optimize    Isolate MCP servers, compact skills, split CLAUDE.md into rules
+  optimize-mcp / optimize-skills   Run one part of optimize
+  shield      Settings, soaker subagents and a context-hygiene rule
+  restore     Put back the files an --apply run changed
+
 ${c.bold('Options')}
   --force     Overwrite skills that already exist (install)
 
@@ -229,8 +243,38 @@ ${c.dim('https://github.com/tanishq286/tq-forge')}
 `);
 }
 
+// Subcommands that hand their arguments to a bundled script unchanged.
+// Each entry: [script in scripts/, arguments placed before the user's].
+const PASS_THROUGH = {
+  scaffold: ['scaffold.sh', []],
+  score: ['quality-score.sh', []],
+  validate: ['dry-test.sh', []],
+  measure: ['optimize.sh', ['measure']],
+  optimize: ['optimize.sh', ['optimize']],
+  'optimize-mcp': ['optimize.sh', ['optimize', '--only', 'mcp']],
+  'optimize-skills': ['optimize.sh', ['optimize', '--only', 'skills,rules']],
+  shield: ['optimize.sh', ['shield']],
+  restore: ['optimize.sh', ['restore']],
+};
+
+function runScript(script, scriptArgs) {
+  // spawnSync with an argument array: nothing the user typed reaches a shell.
+  const result = spawnSync('bash', [path.join(PKG_ROOT, 'scripts', script), ...scriptArgs], {
+    stdio: 'inherit',
+  });
+  if (result.error) {
+    console.error(c.r(`Could not run ${script}: ${result.error.message}`));
+    process.exit(1);
+  }
+  process.exit(result.status === null ? 1 : result.status);
+}
+
 function main() {
   const args = process.argv.slice(2);
+  if (Object.prototype.hasOwnProperty.call(PASS_THROUGH, args[0])) {
+    const [script, prefix] = PASS_THROUGH[args[0]];
+    return runScript(script, [...prefix, ...args.slice(1)]);
+  }
   const cmd = args.find((a) => !a.startsWith('-')) || 'install';
   const force = args.includes('--force') || args.includes('-f');
 

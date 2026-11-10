@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Major release introducing Claude Fable 5.2 orchestrators, lifecycle hooks, MCP scaffolding, isolated subagents, and an automated benchmark test suite.
 
 ### Added
+- **Context optimizer** (`tq-forge measure | optimize | optimize-mcp | optimize-skills | shield | restore`, backed by `scripts/optimize.sh` and `scripts/lib/optimize.py`):
+  - Moves each server in `.mcp.json` into a `.claude/agents/mcp-<name>.md` Haiku worker with inline `mcpServers:`.
+  - Cuts skill descriptions to 160 characters (keeping the "Use when" sentence when it fits, and moving the full text into the body) and moves reference sections of long skills into `reference.md`.
+  - Moves `CLAUDE.md` sections that name existing paths into `.claude/rules/<topic>.md` with `paths:` frontmatter.
+  - `shield` adds `claudeMdExcludes` and `permissions.deny` entries, the `context-soaker` and `test-soaker` subagents, and a context-hygiene rule.
+  - Dry run by default; `--apply` backs up every changed file to `.tq-forge-backup/` and `restore` undoes it.
+  - Leaves symlinked or non-UTF-8 files unchanged, keeps servers with unsafe or colliding names in `.mcp.json`, and refuses `--apply` when the preview is missing a line or server.
+  - `scripts/lib/context_cost.py` estimates always-loaded context as characters ÷ 4. On the synthetic bloated fixture in `tests/test_optimize.py` the estimate drops from 7,337 to 470 tokens (−93.6%); on the lean control project nothing changes. These are fixture results, not a promise for every project.
+- **CLI subcommands** `scaffold`, `score`, and `validate` in `bin/cli.js`, passing arguments to the bundled scripts as an argument array (no shell string).
+- **Optimizer test suite** `tests/test_optimize.py` (28 tests), run by `npm test` after `scripts/test-runner.py`.
+- **Hardened workflows**: every GitHub Action pinned to a commit SHA, `contents: read` permissions on CI, and shellcheck run from the runner image instead of an unpinned third-party action.
 - **Claude Fable 5.2 Architecture & Persistence**:
   - Support for `claude-fable-5-2` as the default orchestrator and strategic advisor model profile with `effort: high`.
   - Dedicated subagent templates: `fable-5-2-orchestrator` (delegation, planning, and self-review) and `fable-5-2-advisor` (defensive foresight, trade-off analysis, second opinion).

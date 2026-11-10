@@ -56,6 +56,16 @@ source "$S/common.sh" && tq_ensure_home
    cat "$TQ_FORGE_HOME/context.md"
    ```
 
+   If the user wants a native Claude Code subagent (one `.claude/agents/<name>.md`
+   file) instead of the 5-file agent, scaffold it and skip step 6:
+   ```bash
+   bash "$S/scaffold.sh" list
+   bash "$S/scaffold.sh" agent --template code-reviewer --out .
+   bash "$S/scaffold.sh" agent "<intent>" --model claude-fable-5-2 --effort high --isolated
+   ```
+   `--isolated` sets `isolation: worktree`; the worktree starts from the
+   default branch, so commit the work the subagent must see first.
+
 6. **Create the directory + 5 files.**
    ```bash
    mkdir -p "$SANDBOX_AGENTS/<slug>"

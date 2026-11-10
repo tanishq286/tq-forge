@@ -311,14 +311,19 @@ def _local_server(args):
     return server
 
 
+def _yaml_key(key):
+    """A mapping key that cannot break out of its line: plain when safe, JSON-quoted otherwise."""
+    return key if re.fullmatch(r"[\w.-]+", str(key)) else json.dumps(str(key))
+
+
 def _yaml_server_block(name, server):
-    lines = [f"  - {name}:"]
+    lines = [f"  - {_yaml_key(name)}:"]
     for key, value in server.items():
         if isinstance(value, dict):
-            lines.append(f"      {key}:")
-            lines.extend(f"        {inner}: {json.dumps(text)}" for inner, text in value.items())
+            lines.append(f"      {_yaml_key(key)}:")
+            lines.extend(f"        {_yaml_key(inner)}: {json.dumps(text)}" for inner, text in value.items())
         else:
-            lines.append(f"      {key}: {json.dumps(value)}")
+            lines.append(f"      {_yaml_key(key)}: {json.dumps(value)}")
     return "\n".join(lines)
 
 
