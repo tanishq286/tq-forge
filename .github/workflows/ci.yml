@@ -19,9 +19,9 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: ShellCheck scripts
+      - name: ShellCheck scripts and hook templates
         # shellcheck is preinstalled on GitHub-hosted Ubuntu runners.
-        run: shellcheck scripts/*.sh
+        run: shellcheck scripts/*.sh templates/hooks/*.sh
 
       - name: Validate JSON manifests
         run: |
@@ -29,6 +29,7 @@ jobs:
           python3 -c "import json; json.load(open('.claude-plugin/marketplace.json'))"
           python3 -c "import json; json.load(open('package.json'))"
           python3 -c "import json; json.load(open('templates/models.json'))"
+          python3 -c "import json; json.load(open('config/models.json'))"
 
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -38,7 +39,9 @@ jobs:
       - name: Check CLI syntax + npm pack
         run: |
           node --check bin/cli.js
+          node --check bin/postinstall.js
           node bin/cli.js --version
+          node bin/cli.js sync-models --offline --root .
           npm pack --dry-run
 
       - name: Run automated test suite & scorer benchmarks

@@ -12,11 +12,14 @@ has a good reason to break with an HTML comment:
 
 import re
 
-FABLE = "claude-fable-5-2"
-OPUS = "claude-opus-5-5"
-SONNET = "claude-sonnet-5-5"
-HAIKU = "claude-haiku-5-5"
+# Rules are keyed by model family, so a model that `sync-models` adds is linted
+# from the day it is added. Mythos shares Fable's API surface.
+FABLE = "fable"
+OPUS = "opus"
+SONNET = "sonnet"
+HAIKU = "haiku"
 ALL_MODELS = frozenset({FABLE, OPUS, SONNET, HAIKU})
+_FAMILY = re.compile(r"^(?:claude-)?(fable|mythos|opus|sonnet|haiku)\b")
 ANY_TARGET = None  # structural rules: apply whatever the target model is
 
 MAX_TOTAL_PENALTY = 40
@@ -185,8 +188,16 @@ def _is_negated(text, start):
     return bool(_NEGATION.search(window))
 
 
+def family(model_id):
+    """The model family a rule set is keyed by, or None for an id this lint does not know."""
+    match = _FAMILY.match(str(model_id or "").lower())
+    if not match:
+        return None
+    return FABLE if match.group(1) == "mythos" else match.group(1)
+
+
 def _applies(rule, model_id):
-    return rule["models"] is ANY_TARGET or (model_id is not None and model_id in rule["models"])
+    return rule["models"] is ANY_TARGET or family(model_id) in rule["models"]
 
 
 def _find(rule, text):

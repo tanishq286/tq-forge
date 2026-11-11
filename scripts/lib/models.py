@@ -6,14 +6,46 @@ profile and loads the prompt snippets a profile asks for.
 """
 
 import json
+import os
 import pathlib
 
 TEMPLATES = pathlib.Path(__file__).resolve().parents[2] / "templates"
 _REGISTRY_FILE = TEMPLATES / "models.json"
+GENERATIONS_FILE = TEMPLATES.parent / "config" / "models.json"
+FALLBACK_SUBAGENT = "claude-haiku-5-5"
 
 
 def registry():
     return json.loads(_REGISTRY_FILE.read_text(encoding="utf-8"))
+
+
+def state_generations_file():
+    """Where `sync-models` keeps the registry when the package folder is read-only."""
+    home = os.environ.get("TQ_FORGE_HOME") or str(pathlib.Path.home() / ".tq-forge")
+    return pathlib.Path(home) / "models.json"
+
+
+def generations():
+    """The model-generation registry `sync-models` maintains: the newer of the bundled and the synced copy."""
+    found = []
+    for path in (GENERATIONS_FILE, state_generations_file()):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict) and isinstance(data.get("models"), dict):
+            found.append(data)
+    return max(found, key=lambda data: str(data.get("updated", "")), default={})
+
+
+def lead_model():
+    """The model the registry recommends for the main conversation."""
+    return (generations().get("pair") or {}).get("lead") or default_model()
+
+
+def subagent_model():
+    """The model the registry recommends for worker subagents."""
+    return (generations().get("pair") or {}).get("subagent") or FALLBACK_SUBAGENT
 
 
 def default_model():

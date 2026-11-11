@@ -100,10 +100,10 @@ function install({ force }) {
     process.exit(1);
   }
 
-  // 1. scripts + templates -> ~/.tq-forge/install/
+  // 1. scripts + templates + model registry -> ~/.tq-forge/install/
   console.log(`\nInstalling support files → ${c.dim(INSTALL_DIR)}`);
   fs.mkdirSync(INSTALL_DIR, { recursive: true });
-  for (const sub of ['scripts', 'templates']) {
+  for (const sub of ['scripts', 'templates', 'config']) {
     const src = path.join(PKG_ROOT, sub);
     const dst = path.join(INSTALL_DIR, sub);
     fs.rmSync(dst, { recursive: true, force: true });
@@ -226,11 +226,15 @@ ${c.bold('Forge and score')} ${c.dim('(each takes --help)')}
   validate    Structural check of a skill, subagent, .mcp.json or settings.json
 
 ${c.bold('Context optimizer')} ${c.dim('(dry run unless --apply; restore undoes it)')}
-  measure     Estimate the always-loaded context of the current project
-  optimize    Isolate MCP servers, compact skills, split CLAUDE.md into rules
+  measure       Estimate the always-loaded context of the current project
+  optimize      Isolate MCP servers, compact skills, split CLAUDE.md into rules
   optimize-mcp / optimize-skills   Run one part of optimize
-  shield      Settings, soaker subagents and a context-hygiene rule
-  restore     Put back the files an --apply run changed
+  auto-improve  optimize, plus usage- and score-driven fixes ${c.dim('(--root ~ for your user setup)')}
+  shield        Lean settings, soaker subagents and a one-line hygiene note
+  restore       Put back the files an --apply run changed ${c.dim('(--outside for followed symlink targets)')}
+
+${c.bold('Models')} ${c.dim('(dry run unless --apply)')}
+  sync-models   Detect new Claude models; update the registry and pinned model ids
 
 ${c.bold('Options')}
   --force     Overwrite skills that already exist (install)
@@ -255,6 +259,8 @@ const PASS_THROUGH = {
   'optimize-skills': ['optimize.sh', ['optimize', '--only', 'skills,rules']],
   shield: ['optimize.sh', ['shield']],
   restore: ['optimize.sh', ['restore']],
+  'auto-improve': ['auto-improve.sh', []],
+  'sync-models': ['sync-models.sh', []],
 };
 
 function runScript(script, scriptArgs) {

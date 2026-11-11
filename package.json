@@ -10,6 +10,7 @@
     "bin/",
     "scripts/",
     "templates/",
+    "config/",
     "skills/",
     "README.md",
     "LICENSE",
@@ -18,7 +19,8 @@
     "!**/*.pyc"
   ],
   "scripts": {
-    "test": "python3 scripts/test-runner.py && python3 -m unittest discover -s tests"
+    "test": "python3 scripts/test-runner.py && python3 -m unittest discover -s tests",
+    "postinstall": "node bin/postinstall.js"
   },
   "keywords": [
     "claude-code",

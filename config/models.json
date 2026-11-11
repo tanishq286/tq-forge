@@ -1,0 +1,72 @@
+{
+  "schema": 1,
+  "updated": "2026-11-11",
+  "source": "seed",
+  "pricing_note": "USD per million tokens at Anthropic first-party API rates, as published on 2026-11-03. Other platforms price separately. Check the pricing page before budgeting.",
+  "cache": {
+    "write_5m_multiplier": 1.25,
+    "note": "A 5-minute cache write costs about 1.25x the input price. cache_read is the listed price per million cached tokens."
+  },
+  "pair": {
+    "lead": "claude-fable-5-2",
+    "subagent": "claude-haiku-5-5"
+  },
+  "families": {
+    "fable": {"role": "orchestrator", "effort": "high", "current": "claude-fable-5-2"},
+    "mythos": {"role": "orchestrator", "effort": "high", "current": "claude-mythos-5-2", "restricted": true},
+    "opus": {"role": "daily-driver", "effort": "medium", "current": "claude-opus-5-5"},
+    "sonnet": {"role": "daily-driver", "effort": "medium", "current": "claude-sonnet-5-5"},
+    "haiku": {"role": "fast-worker", "effort": "medium", "current": "claude-haiku-5-5"}
+  },
+  "prompting_rules": {
+    "effort-not-budget": "Set reasoning depth with `effort`. A fixed thinking-token budget (budget_tokens) is rejected.",
+    "append-only-history": "Keep the conversation append-only and pass thinking blocks back unchanged. Editing or dropping earlier turns invalidates preserved thinking.",
+    "thinking-always-on": "Thinking cannot be disabled. Lower `effort` instead.",
+    "no-forced-tool-choice": "tool_choice `any` and `tool` are rejected. Use `auto` and name the tool in the prompt.",
+    "no-prefill": "Assistant-turn prefill is rejected. Describe the format or use structured outputs.",
+    "no-sampling-params": "temperature, top_p and top_k are rejected. Remove them from request examples."
+  },
+  "models": {
+    "claude-fable-5-2": {
+      "family": "fable",
+      "version": [5, 2],
+      "role": "orchestrator",
+      "effort": "high",
+      "pricing": {"input": 8.0, "output": 40.0, "cache_read": 0.2},
+      "prompting": ["effort-not-budget", "append-only-history", "thinking-always-on", "no-forced-tool-choice", "no-prefill", "no-sampling-params"]
+    },
+    "claude-mythos-5-2": {
+      "family": "mythos",
+      "version": [5, 2],
+      "role": "orchestrator",
+      "effort": "high",
+      "restricted": true,
+      "pricing": {"input": 8.0, "output": 40.0, "cache_read": 0.2},
+      "prompting": ["effort-not-budget", "append-only-history", "thinking-always-on", "no-forced-tool-choice", "no-prefill", "no-sampling-params"]
+    },
+    "claude-opus-5-5": {
+      "family": "opus",
+      "version": [5, 5],
+      "role": "daily-driver",
+      "effort": "medium",
+      "pricing": {"input": 4.0, "output": 20.0, "cache_read": 0.2},
+      "prompting": ["effort-not-budget", "append-only-history", "thinking-always-on", "no-forced-tool-choice", "no-prefill", "no-sampling-params"]
+    },
+    "claude-sonnet-5-5": {
+      "family": "sonnet",
+      "version": [5, 5],
+      "role": "daily-driver",
+      "effort": "medium",
+      "pricing": {"input": 2.0, "output": 10.0, "cache_read": 0.1},
+      "prompting": ["effort-not-budget", "append-only-history", "thinking-always-on", "no-forced-tool-choice", "no-prefill", "no-sampling-params"]
+    },
+    "claude-haiku-5-5": {
+      "family": "haiku",
+      "version": [5, 5],
+      "role": "fast-worker",
+      "effort": "medium",
+      "pricing": {"input": 0.1, "output": 0.5, "cache_read": null, "note": "prompts up to 100K tokens; 0.50 / 2.50 beyond"},
+      "prompting": ["effort-not-budget", "append-only-history", "no-prefill", "no-sampling-params"]
+    }
+  }
+}

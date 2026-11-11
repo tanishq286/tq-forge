@@ -22,12 +22,14 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts" / "lib"))
 
 import drytest  # noqa: E402
 import frontmatter  # noqa: E402
+import model_sync  # noqa: E402
 import models  # noqa: E402
 import scaffold  # noqa: E402
 import schema  # noqa: E402
@@ -169,8 +171,9 @@ def test_agent_templates(suite: TestSuite):
     for path in (fable_orchestrator, fable_advisor):
         text = path.read_text(encoding="utf-8")
         fields, body, _ = frontmatter.read(text)
-        suite.assert_true(fields.get("model") == "claude-fable-5-2",
-                          f"{path.name}: model must be 'claude-fable-5-2'")
+        # The lead model comes from the registry, so this still holds after `sync-models` adds a release.
+        suite.assert_true(fields.get("model") == models.default_model(),
+                          f"{path.name}: model must be the registry's lead model '{models.default_model()}'")
         suite.assert_true(fields.get("effort") == "high",
                           f"{path.name}: effort must be 'high'")
         suite.assert_true("# Finishing work" in body,
@@ -242,7 +245,7 @@ def test_dynamic_scaffolding(suite: TestSuite):
         suite.assert_true(af_fields.get("isolation") == "worktree", "Isolated agent has isolation: worktree")
         suite.assert_true(af_fields.get("permissionMode") == "plan", "Isolated agent has permissionMode: plan")
         suite.assert_true(af_fields.get("memory") == "project", "Isolated agent has memory: project")
-        suite.assert_true(af_fields.get("model") == "claude-fable-5-2", "Isolated agent has claude-fable-5-2")
+        suite.assert_true(af_fields.get("model") == models.default_model(), "Isolated agent has the lead model")
         suite.assert_true(af_fields.get("effort") == "high", "Isolated agent has effort: high")
         suite.assert_true("# Finishing work" in af_body, "Isolated agent prompt has # Finishing work")
         suite.log_pass("scaffold agent --isolated", "worktree isolation, permissionMode: plan, memory: project, effort: high")
@@ -363,6 +366,83 @@ def test_hook_lifecycle_enforcement(suite: TestSuite):
     suite.log_pass("Stop hook enforcement", "exit 0 loop protection, exit 2 prevents premature stop")
 
 
+def test_model_registry_and_lifecycle(suite: TestSuite):
+    suite.log_section("6. Model Registry, sync-models, auto-improve Hook & postinstall")
+
+    registry = json.loads((ROOT / "config" / "models.json").read_text(encoding="utf-8"))
+    profiles = models.registry()["models"]
+    for family in model_sync.FAMILIES:
+        current = registry["families"][family]["current"]
+        suite.assert_true(current in registry["models"], f"registry family '{family}' points at a listed model")
+        suite.assert_true(model_sync.parse(current) == (family, tuple(registry["models"][current]["version"])),
+                          f"{current}: id, family and version agree")
+    for role, model_id in registry["pair"].items():
+        suite.assert_true(model_id in profiles, f"registry {role} model '{model_id}' has a template profile")
+    suite.assert_true(registry["pair"]["lead"] == models.default_model(), "registry lead is the default profile")
+    _, upgrades, _ = model_sync.plan_registry(registry, {})
+    suite.assert_true(upgrades == {}, "an offline sync changes nothing")
+    _, upgrades, _ = model_sync.plan_registry(registry, {"claude-fable-9-9": {}})
+    suite.assert_true(upgrades == {}, "a model id too far ahead is not trusted")
+    suite.log_pass("config/models.json", f"{len(registry['models'])} models, pair {registry['pair']}")
+
+    pkg = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+    suite.assert_true(pkg["scripts"].get("postinstall") == "node bin/postinstall.js", "package.json runs postinstall")
+    suite.assert_true("config/" in pkg["files"], "package.json ships config/")
+
+    with tempfile.TemporaryDirectory(prefix="tq-forge-lifecycle-") as tmp:
+        tmp = pathlib.Path(tmp)
+        quiet = subprocess.run(["node", str(ROOT / "bin" / "postinstall.js")], capture_output=True, text=True,
+                               env={**os.environ, "CI": "1"}, timeout=30)
+        suite.assert_true(quiet.returncode == 0 and quiet.stdout == "", "postinstall is silent in CI")
+        env = {key: value for key, value in os.environ.items() if key not in ("CI", "TQ_FORGE_SKIP_POSTINSTALL")}
+        shown = subprocess.run(["node", str(ROOT / "bin" / "postinstall.js")], capture_output=True, text=True,
+                               env={**env, "HOME": str(tmp), "USERPROFILE": str(tmp)}, timeout=30)
+        suite.assert_true(shown.returncode == 0, "postinstall exits 0 without a ~/.claude folder")
+        suite.assert_true("npx tq-forge auto-improve --root ~ --apply" in shown.stdout, "postinstall prints the command")
+        suite.log_pass("postinstall", "exit 0, silent in CI, prints the one-line command")
+
+        project, state = tmp / "project", tmp / "state"
+        project.mkdir()
+        sections = "\n".join(f"## Topic {n}\n\n" + "\n".join(f"- Detail {n}.{m} of the topic." for m in range(40))
+                             for n in range(4))
+        (project / "CLAUDE.md").write_text(f"# Project\n\n## Rules\n\n- Use tabs.\n\n{sections}\n", encoding="utf-8")
+        hook = ROOT / "templates" / "hooks" / "auto-improve-session.sh"
+
+        def run_hook(**extra):
+            env = {**os.environ, "TQ_FORGE_HOME": str(state), "TQ_FORGE_SCRIPTS": str(ROOT / "scripts"),
+                   "TQ_FORGE_AUTO_ROOT": str(project), "TQ_FORGE_BLOAT_THRESHOLD": "200", **extra}
+            return subprocess.run(["bash", str(hook)], input=b'{"session_id": "s"}', capture_output=True,
+                                  env=env, timeout=30)
+
+        off = run_hook(TQ_FORGE_AUTO_IMPROVE="0")
+        suite.assert_true(off.returncode == 0 and not state.exists(), "hook does nothing when switched off")
+        calm = run_hook(TQ_FORGE_BLOAT_THRESHOLD="999999")
+        suite.assert_true(calm.returncode == 0 and (state / "auto-improve.stamp").is_file(),
+                          "hook measures and stamps when under the threshold")
+        suite.assert_true(not (state / "auto-improve.log").exists(), "hook starts no pass under the threshold")
+        waiting = run_hook()
+        suite.assert_true(not (state / "auto-improve.log").exists(), "hook waits one interval between measurements")
+        fired = run_hook(TQ_FORGE_AUTO_INTERVAL="0")
+        suite.assert_true(fired.returncode == 0, f"hook must exit 0 (got {fired.returncode})")
+        for result in (off, calm, waiting, fired):
+            suite.assert_true(result.stdout == b"", "hook prints nothing into the session context")
+        deadline = time.time() + 20
+        while time.time() < deadline and not (project / ".tq-forge-backup").is_dir():
+            time.sleep(0.2)
+        suite.assert_true((project / ".tq-forge-backup").is_dir(), "background auto-improve applied with a backup")
+        log = (state / "auto-improve.log").read_text(encoding="utf-8")
+        suite.assert_true("always-loaded context is" in log, "hook logs why it started a pass")
+        suite.assert_true(len((project / "CLAUDE.md").read_text(encoding="utf-8").splitlines()) <= 35,
+                          "CLAUDE.md is lean after the background pass")
+        (state / "model-sync.json").write_text("{}", encoding="utf-8")
+        os.utime(state / "model-sync.json", (time.time() + 5, time.time() + 5))
+        run_hook(TQ_FORGE_BLOAT_THRESHOLD="999999")
+        suite.assert_true("a new model was synced" in (state / "auto-improve.log").read_text(encoding="utf-8"),
+                          "hook starts a pass after a model sync")
+        time.sleep(1.5)  # let the detached pass finish before the folder is removed
+    suite.log_pass("auto-improve-session hook", "silent, exit 0, threshold + interval + model-sync triggers")
+
+
 def print_summary_table(suite: TestSuite):
     print(f"\n{C_BOLD}{C_CYAN}=== Quantitative Quality Scorer Benchmarks (0–100 Scale) ==={C_RESET}")
     header = f"{'Artifact':<28} {'Kind':<10} {'Target Model':<18} {'Score':>6}  {'Dimensions':<30}"
@@ -385,6 +465,7 @@ def main():
         test_agent_templates(suite)
         test_dynamic_scaffolding(suite)
         test_hook_lifecycle_enforcement(suite)
+        test_model_registry_and_lifecycle(suite)
     except TestFailure as e:
         print(f"\n{C_RED}❌ Test assertion failed: {e}{C_RESET}", file=sys.stderr)
         return 1
