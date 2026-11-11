@@ -156,15 +156,15 @@ Three opt-in flags reach further than the project's own files:
 | Signal | Change |
 | :--- | :--- |
 | `CLAUDE.md` over 300 tokens | Rule sections stay. Every other section moves, word for word, into an on-demand skill (`reference.md` plus a 140-character trigger), and a one-line pointer stays behind. Long rule bullets keep their first sentence; the full wording goes to `reference.md` |
-| Rule file over 150 tokens with no `paths:` | Gets source-file globs, so it loads when Claude reads code instead of on every turn (`--keep-rules` skips this) |
+| `--scope-rules`: rule file over 150 tokens with no `paths:` | Gets any-file globs, so it loads the first time Claude touches a file instead of on every turn. Opt-in, because a rule about how to answer should stay always loaded |
 | Skill description over 140 characters | Cut to 140, keeping the "Use when" trigger (a trigger that is too long is cut, never dropped) |
-| Skill still over 150 tokens a turn and never invoked | Listed by name only through `skillOverrides` |
+| Skill still over 150 tokens a turn and never invoked | Listed by name only through `skillOverrides`. Skipped when there are no session logs to read, and for any skill you already have an override for |
 | `--dedupe-plugins` | Symlinked skills a plugin also loads are unlinked; their plugin twins and idle plugin skills over 150 tokens are compacted |
-| Skill or subagent scoring under 85 | Mechanical fixes only: `paths:` when the description names file types, an outdated `model:` id replaced, a missing `effort` filled in |
+| Skill or subagent scoring under 85 | Mechanical fixes only: an outdated `model:` id replaced, a missing `effort` filled in. `--add-paths` also adds `paths:` for the file types a description names; it is opt-in because `paths:` stops a skill loading for every other file |
 
 ```bash
 npx tq-forge auto-improve --root ~                      # dry run on your user setup
-npx tq-forge auto-improve --root ~ --follow-symlinks --dedupe-plugins --apply
+npx tq-forge auto-improve --root ~ --follow-symlinks --dedupe-plugins --scope-rules --apply
 npx tq-forge restore --root ~                           # undo
 ```
 
@@ -182,12 +182,12 @@ npx tq-forge sync-models --root ~ --apply
 npx tq-forge sync-models --offline       # no network call
 ```
 
-`sync-models` reads the live list of model ids from Anthropic's `/v1/models` when `ANTHROPIC_API_KEY` is set, otherwise from OpenRouter's public model list, and falls back to the registry itself when neither answers. When a family has a newer version (`claude-fable-*`, `claude-mythos-*`, `claude-opus-*`, `claude-sonnet-*`, `claude-haiku-*`) it:
+`sync-models` reads the live list of model ids from Anthropic's `/v1/models` when `ANTHROPIC_API_KEY` is set, otherwise from OpenRouter's public model list, and falls back to the registry itself when neither answers. Only Anthropic's own list is acted on: a newer id seen on OpenRouter is reported and nothing is rewritten unless you pass `--trust-source`. An id more than one major or five minor versions ahead is ignored either way. When a family has a newer version (`claude-fable-*`, `claude-mythos-*`, `claude-opus-*`, `claude-sonnet-*`, `claude-haiku-*`) it:
 
 1. adds the model to the registry. Role, effort and prompting rules carry over from the version it replaces. Prices come from the source when it reports them; otherwise they are copied and marked `inherited_from`, which means "check this".
 2. rewrites pinned `model:` ids that are now behind, in `.claude/agents/**/*.md` and `.claude/settings.json` (`model`, `env.CLAUDE_CODE_SUBAGENT_MODEL`, `modelSettings`) under `--root`, and in the tq-forge templates. Aliases such as `opus` or `inherit` are left alone.
 
-The model-compatibility lint is keyed by family, so a model added this way is linted from the day it is added. `.github/workflows/model-sync.yml` runs the sync weekly, runs `npm test`, and opens a pull request when something changed. A person still merges it: a new model can change behavior that no registry field describes.
+The model-compatibility lint is keyed by family, so a model added this way is linted from the day it is added. `.github/workflows/model-sync.yml` runs the sync weekly (with `--trust-source`, since its output is a pull request), runs `npm test`, and opens that pull request when something changed. A person still merges it: a new model can change behavior that no registry field describes.
 
 ### Benchmark
 
@@ -206,7 +206,7 @@ The test asserts a reduction of at least 40% on the bloated fixture, with and wi
 
 ### A real setup
 
-The same estimator on the maintainer's own `~` (a ruflo / claude-flow `CLAUDE.md`, ten always-loaded rule files, 49 personal skills of which 25 were symlinks duplicated by a plugin, and the claude-flow MCP server with 393 tools), after `shield --apply` and `auto-improve --root ~ --follow-symlinks --dedupe-plugins --apply`:
+The same estimator on the maintainer's own `~` (a ruflo / claude-flow `CLAUDE.md`, ten always-loaded rule files, 49 personal skills of which 25 were symlinks duplicated by a plugin, and the claude-flow MCP server with 393 tools), after `shield --apply` and `auto-improve --root ~ --follow-symlinks --dedupe-plugins --scope-rules --apply`:
 
 | Always-loaded context (est. tokens) | Before | After |
 | :--- | ---: | ---: |
@@ -220,7 +220,7 @@ The same estimator on the maintainer's own `~` (a ruflo / claude-flow `CLAUDE.md
 
 Read these three ways before quoting them:
 
-- **The rules did not go away.** The 4,853 tokens of rules now load when Claude reads a source file. A coding session pays for them as before; a session that never opens code does not.
+- **The rules did not go away.** With `--scope-rules` the 4,853 tokens of rules load the first time Claude touches a file. A session that works on files pays for them as before; a session that never opens one does not. Without that flag the total is 6,763 (−48.3%).
 - **Plugins bound the skill saving.** That machine also has 412 plugin skills. Counted under Claude Code's 40,000-character listing budget, the total goes from 19,829 to 11,228 (−43.4%), because the budget that the shorter personal descriptions free up is spent on plugin descriptions that were being dropped before. The durable savings there are `CLAUDE.md`, the rules and the MCP tool names.
 - **It is one machine.** `tq-forge restore --root ~` put all 121 changed files back byte for byte when this was tested.
 
@@ -233,7 +233,7 @@ Read these three ways before quoting them:
 - `--extract-scripts` (moving long shell blocks into `scripts/`), `shield --strict` and `shield --deny-env` are opt-in because they can change behavior. `shield` does set a default effort and subagent model; `--effort keep` and `--subagent-model keep` turn that off, and an existing `CLAUDE_CODE_SUBAGENT_MODEL` is never overwritten.
 - Symlinked files and folders (for example `CLAUDE.md -> AGENTS.md`, or skills linked from `~/.agents/skills`) and files that are not valid UTF-8 are left unchanged and listed as warnings, unless you pass `--follow-symlinks`. A server whose name is unsafe in agent frontmatter, or whose worker file name is already taken, stays in `.mcp.json`.
 - `--apply` refuses to write when the preview is missing any line or MCP server that the project had before.
-- `restore` puts back the files that existed before and deletes the files the optimizer created, including edits you made to those created files afterwards. A file outside `--root` (the target of a followed symlink) is restored only with `restore --outside`, so a backup folder that came with a cloned project cannot write elsewhere on your machine.
+- `restore` puts back the files that existed before and deletes the files the optimizer created, including edits you made to those created files afterwards. A file outside `--root` (the target of a followed symlink) is restored only with `restore --outside`, so a backup folder that came with a cloned project cannot write elsewhere on your machine. For the same reason tq-forge refuses to run with a backup folder that is or contains a symlink, and `restore` never copies onto one.
 
 ---
 
@@ -358,7 +358,7 @@ bash scripts/scaffold.sh mcp --name sqlite-db --command python3 --arg -m --arg s
 npm test
 ```
 
-Runs two suites: `scripts/test-runner.py` (264 assertions on manifests, frontmatter schemas, hook exit codes, scaffolding from one-line intents, the 0–100 scorer, the model registry, the auto-improve session hook and `postinstall`) and `tests/test_optimize.py` (62 tests on the context optimizer, auto-improve and model sync: the before/after benchmark, dry-run and restore safety, symlink and plugin handling, model-id parsing and upgrades with the network faked, and hostile inputs such as colliding server names and non-UTF-8 files).
+Runs two suites: `scripts/test-runner.py` (264 assertions on manifests, frontmatter schemas, hook exit codes, scaffolding from one-line intents, the 0–100 scorer, the model registry, the auto-improve session hook and `postinstall`) and `tests/test_optimize.py` (76 tests on the context optimizer, auto-improve and model sync: the before/after benchmark, dry-run and restore safety, symlink and plugin handling, model-id parsing and upgrades with the network faked, and hostile inputs such as colliding server names and non-UTF-8 files).
 
 ---
 

@@ -350,6 +350,21 @@ class SkillAndRuleTest(ProjectCase):
         self.assertEqual(subprocess.run(["bash", "-n", str(script)]).returncode, 0)
         self.assertIn('bash "${CLAUDE_SKILL_DIR}/scripts/step-1.sh"', (folder / "SKILL.md").read_text())
 
+    def test_quoted_descriptions_are_compacted_once(self):
+        quoted = ('Helps with requests like "how do I do X", "find a skill for X" or "is there a skill that does Y". '
+                  + "It covers many more cases in detail. " * 4 + 'Use when someone says "find me a skill".')
+        folder = self.root / ".claude" / "skills" / "finder"
+        folder.mkdir(parents=True)
+        (folder / "SKILL.md").write_text(f"---\nname: finder\ndescription: {json.dumps(quoted)}\n---\n\n# Finder\n")
+        self.assertEqual(frontmatter.read((folder / "SKILL.md").read_text())[0]["description"], quoted)
+        first = optimize.build_report(self.root, optimize.plan_skills(self.root, [], False, 140), None, True)
+        self.assertEqual(first["files"], [".claude/skills/finder/SKILL.md"])
+        short = frontmatter.read((folder / "SKILL.md").read_text())[0]["description"]
+        self.assertLessEqual(len(short), 140)
+        self.assertIn('"find me a skill"', short)
+        again = optimize.build_report(self.root, optimize.plan_skills(self.root, [], False, 140), None, True)
+        self.assertEqual(again["files"], [], "escapes in the stored description must not make it look too long")
+
     def test_a_trigger_too_long_to_fit_is_cut_not_dropped(self):
         long_trigger = ("Optimizes agent context setup. Use when starting a new session, when agent output quality "
                         "degrades, when switching between tasks, or when you need to configure rules files.")
@@ -582,7 +597,7 @@ class FollowSymlinkTest(ProjectCase):
             "created": [str(outside / "victim.txt"), "../escape.txt"],
             "symlink_targets": {str(outside / "overwrite.txt"): f"{optimize.LINK_BACKUPS}/payload",
                                 "inside.txt": "../../CLAUDE.md"},
-            "removed_links": {str(outside / "planted"): "/etc", "../planted": "/etc"}}))
+            "removed_links": {str(outside / "planted"): "/etc", "../planted": "/etc", "link-in-root": "/etc"}}))
         (self.root.parent / "escape.txt").write_text("sibling")
         self.addCleanup((self.root.parent / "escape.txt").unlink)
         report = optimize.restore(self.root)
@@ -592,7 +607,70 @@ class FollowSymlinkTest(ProjectCase):
         self.assertFalse((outside / "planted").exists() or (outside / "planted").is_symlink())
         self.assertFalse((self.root.parent / "planted").is_symlink())
         self.assertFalse((self.root / "inside.txt").exists(), "a backup path outside the backup folder is ignored")
-        self.assertEqual(len(report["skipped"]), 3)
+        self.assertFalse((self.root / "link-in-root").is_symlink(), "a link out of the root needs --outside")
+        self.assertEqual(len(report["skipped"]), 4)
+
+    def test_outside_flag_still_requires_absolute_keys(self):
+        (self.root.parent / "sibling.txt").write_text("sibling")
+        self.addCleanup((self.root.parent / "sibling.txt").unlink)
+        backup_root = self.root / optimize.BACKUP_DIR
+        (backup_root / optimize.LINK_BACKUPS).mkdir(parents=True)
+        (backup_root / optimize.LINK_BACKUPS / "payload").write_text("attacker text")
+        (backup_root / optimize.MANIFEST).write_text(json.dumps({
+            "created": [], "symlink_targets": {"../sibling.txt": f"{optimize.LINK_BACKUPS}/payload"}}))
+        report = optimize.restore(self.root, outside=True)
+        self.assertEqual((self.root.parent / "sibling.txt").read_text(), "sibling")
+        self.assertEqual(report["skipped"], ["../sibling.txt"])
+
+    def test_a_failed_apply_can_still_be_restored(self):
+        (self.root / "a.md").write_text("original a\n")
+        (self.root / "b.md").write_text("a file where the plan expects a folder\n")
+        before = tree_digest(self.root)
+        with self.assertRaises(OSError):
+            optimize.apply_writes(self.root, {"a.md": "changed a\n", "b.md/child.md": "new\n"})
+        self.assertEqual((self.root / "a.md").read_text(), "changed a\n", "the first write landed before the failure")
+        manifest = json.loads((self.root / optimize.BACKUP_DIR / optimize.MANIFEST).read_text())
+        self.assertEqual(manifest["created"], ["b.md/child.md"])
+        optimize.restore(self.root)
+        self.assertEqual(tree_digest(self.root), before)
+
+    def test_restore_never_writes_through_a_symlink_in_the_root(self):
+        outside = self._outside()
+        (outside / "victim.txt").write_text("keep me")
+        (outside / "folder").mkdir()
+        (self.root / "CLAUDE.md").symlink_to(outside / "victim.txt")
+        (self.root / "docs").symlink_to(outside / "folder")
+        backup_root = self.root / optimize.BACKUP_DIR
+        (backup_root / "docs").mkdir(parents=True)
+        (backup_root / "CLAUDE.md").write_text("attacker text")
+        (backup_root / "docs" / "new.md").write_text("attacker text")
+        (backup_root / optimize.MANIFEST).write_text(json.dumps({"created": []}))
+        report = optimize.restore(self.root)
+        self.assertEqual((outside / "victim.txt").read_text(), "keep me")
+        self.assertFalse((outside / "folder" / "new.md").exists())
+        self.assertEqual(report["skipped"], ["CLAUDE.md", "docs/new.md"])
+        self.assertTrue(backup_root.is_dir(), "the backup is kept when something was skipped")
+
+    def test_a_backup_folder_holding_a_symlink_is_refused(self):
+        outside = self._outside()
+        (self.root / "CLAUDE.md").write_text("# Project\n\nUse tabs.\n")
+        backup_root = self.root / optimize.BACKUP_DIR
+        backup_root.mkdir()
+        (backup_root / "CLAUDE.md").symlink_to(outside / "planted.txt")
+        plan = optimize.new_plan()
+        plan["writes"]["CLAUDE.md"] = "# Project\n\nUse tabs.\n\nMore.\n"
+        with self.assertRaises(scaffold.ScaffoldError):
+            optimize.build_report(self.root, plan, None, True)
+        self.assertFalse((outside / "planted.txt").exists())
+        self.assertNotIn("More.", (self.root / "CLAUDE.md").read_text())
+        with self.assertRaises(scaffold.ScaffoldError):
+            optimize.restore(self.root)
+        (backup_root / "CLAUDE.md").unlink()
+        shutil.rmtree(backup_root)
+        (self.root / optimize.BACKUP_DIR).symlink_to(outside)
+        with self.assertRaises(scaffold.ScaffoldError):
+            optimize.build_report(self.root, plan, None, True)
+        self.assertEqual(list(outside.iterdir()), [])
 
     def test_shared_agents_folder_is_compacted_and_restore_is_byte_identical(self):
         write_skill(self.root / ".agents" / "skills" / "linked", "linked")
@@ -805,6 +883,48 @@ class ModelSyncTest(ProjectCase):
         self.assertEqual(len(result["errors"]), 2)
         self.assertEqual(model_sync.discover("offline", {}, broken), {"source": "offline", "models": {}, "errors": []})
 
+    def test_implausible_ids_and_malformed_responses_change_nothing(self):
+        found = self._found(["claude-opus-5-99", "claude-opus-5-6", "claude-sonnet-7", "claude-haiku-6-9"])
+        updated, upgrades, notes = model_sync.plan_registry(self.registry, found)
+        self.assertEqual(upgrades, {"claude-opus-5-5": "claude-opus-5-6"}, "a plausible id is not blocked by a wild one")
+        self.assertEqual(sum("ignored" in note for note in notes), 3)
+        for body in ({"data": None}, {"data": 5}, {"data": ["x", {"id": 7}]}, [], "text"):
+            result = model_sync.discover("openrouter", {}, lambda url, headers=None, body=body: body)
+            self.assertEqual((result["source"], result["models"]), ("offline", {}), body)
+        bad_price = {"data": [{"id": "anthropic/claude-opus-5.6", "pricing": {"prompt": "-1", "completion": "0.00002"}}]}
+        result = model_sync.discover("openrouter", {}, lambda url, headers=None: bad_price)
+        self.assertEqual(result["models"], {"claude-opus-5-6": {}}, "a negative price is dropped, the id is kept")
+
+    def test_an_unverified_source_is_reported_not_applied(self):
+        package, project = self._package(), self._project()
+        before = (tree_digest(package), tree_digest(project))
+        report = model_sync.sync(project, self._found(), "openrouter", apply=True, package=package, trusted=False)
+        self.assertEqual((tree_digest(package), tree_digest(project)), before)
+        self.assertEqual(report["upgrades"], {})
+        self.assertEqual(report["pending"], {"claude-fable-5-2": "claude-fable-5-3", "claude-haiku-5-5": "claude-haiku-6"})
+        self.assertTrue(all("unverified" in note for note in report["notes"][:2]))
+        self.assertIn("seen, not applied", model_sync.render(report))
+        self.assertFalse((self.root / "state" / model_sync.STAMP).exists())
+        self.assertNotIn("openrouter", model_sync.TRUSTED_SOURCES)
+
+    def test_redirects_are_not_followed_with_the_api_key(self):
+        handler = model_sync._NoRedirect()
+        self.assertIsNone(handler.redirect_request(None, None, 302, "Found", {}, "https://example.com/"))
+        self.assertTrue(any(isinstance(item, model_sync._NoRedirect) for item in model_sync._OPENER.handlers))
+
+    def test_two_old_model_settings_never_collapse_into_one(self):
+        settings = {"modelSettings": {"claude-opus-4-1": {"effortLevel": "low"}, "claude-opus-4-5": {"effortLevel": "high"}}}
+        upgraded, notes = model_sync._upgrade_settings(settings, self.registry)
+        self.assertEqual(upgraded["modelSettings"], {"claude-opus-5-5": {"effortLevel": "low"},
+                                                     "claude-opus-4-5": {"effortLevel": "high"}})
+        self.assertEqual(len(notes), 1)
+
+    def test_crlf_frontmatter_is_upgraded(self):
+        text = "---\r\nname: a\r\nmodel: claude-opus-4-8\r\n---\r\n\r\nBody.\r\n"
+        upgraded, change = model_sync.rewrite_model_field(text, self.registry)
+        self.assertEqual(change, ("claude-opus-4-8", "claude-opus-5-5"))
+        self.assertEqual(upgraded, text.replace("claude-opus-4-8", "claude-opus-5-5"), "line endings are kept")
+
     def test_live_prices_replace_inherited_ones(self):
         found = {"claude-opus-5-6": {"pricing": {"input": 3.0, "output": 15.0, "cache_read": 0.15, "source": "openrouter"}}}
         updated, _, notes = model_sync.plan_registry(self.registry, found)
@@ -893,6 +1013,7 @@ class ModelSyncTest(ProjectCase):
         ids = self.root / "ids.json"
         ids.write_text(json.dumps(["claude-fable-5-3"]))
         listed = subprocess.run([*script, "--ids-file", str(ids)], capture_output=True, text=True)
+        self.assertEqual(listed.returncode, 0, listed.stderr)
         report = json.loads(listed.stdout)
         self.assertEqual((report["mode"], report["source"]), ("dry-run", "ids-file"))
         self.assertEqual(report["upgrades"], {"claude-fable-5-2": "claude-fable-5-3"})
@@ -912,7 +1033,7 @@ FLOW_CLAUDE_MD = "\n".join([
     "## Build & Test", "", "- ALWAYS run tests after code changes", ""])
 
 OPTIONS = {"threshold": 150, "min_score": 85, "description_limit": 140, "follow_symlinks": False,
-           "dedupe_plugins": False, "keep_rules": False, "keep_mcp": [], "extract_scripts": False}
+           "dedupe_plugins": False, "scope_rules": False, "keep_mcp": [], "extract_scripts": False, "add_paths": False}
 
 
 def auto(root, apply=False, inventory=None, **overrides):
@@ -1005,18 +1126,26 @@ class AutoImproveTest(ProjectCase):
         (rules / "small.md").write_text("# Small\n\n- Use tabs.\n")
         scoped = "---\npaths:\n  - \"src/**\"\n---\n\n" + big
         (rules / "scoped.md").write_text(scoped)
-        report = auto(self.root, apply=True)
+        default = auto(self.root, apply=True)
+        self.assertEqual(default["files"], [], "rules are scoped only when asked")
+        self.assertTrue(any("--scope-rules" in item and "2 rule file(s)" in item for item in default["recommendations"]))
+        report = auto(self.root, apply=True, scope_rules=True)
         self.assertEqual(report["files"], [".claude/rules/described.md", ".claude/rules/team/testing.md"])
         self.assertEqual(report["after"]["parts"]["rules"], context_cost.estimate_tokens("# Small\n\n- Use tabs.\n"))
         fields, body, _ = frontmatter.read((rules / "team" / "testing.md").read_text())
-        self.assertEqual(fields["paths"], list(auto_improve.SOURCE_GLOBS))
+        self.assertEqual(fields["paths"], list(auto_improve.FILE_GLOBS))
         self.assertEqual(body.strip(), big.strip())
         fields, _, _ = frontmatter.read((rules / "described.md").read_text())
-        self.assertEqual((fields["description"], fields["paths"]), ("Style rules", list(auto_improve.SOURCE_GLOBS)))
+        self.assertEqual((fields["description"], fields["paths"]), ("Style rules", list(auto_improve.FILE_GLOBS)))
         self.assertEqual((rules / "scoped.md").read_text(), scoped)
-        self.assertEqual(auto(self.root, apply=True)["files"], [])
+        self.assertEqual(auto(self.root, apply=True, scope_rules=True)["files"], [])
         optimize.restore(self.root)
-        self.assertEqual(auto(self.root, keep_rules=True)["files"], [])
+        flush = "---\npaths:\n- \"src/**\"\n- \"lib/**\"\n---\n\n" + big
+        (rules / "team" / "testing.md").write_text(flush)
+        self.assertEqual(frontmatter.read(flush)[0]["paths"], ["src/**", "lib/**"])
+        again = auto(self.root, apply=True, scope_rules=True)
+        self.assertEqual(again["files"], [".claude/rules/described.md"], "a flush YAML list is still a paths key")
+        self.assertEqual((rules / "team" / "testing.md").read_text(), flush)
 
     def test_unused_skill_that_cannot_be_compacted_is_listed_by_name_only(self):
         outside = pathlib.Path(tempfile.mkdtemp()).resolve()
@@ -1035,6 +1164,51 @@ class AutoImproveTest(ProjectCase):
         followed = auto(self.root, follow_symlinks=True)
         self.assertFalse(any("name only" in note for note in followed["notes"]), "compaction is preferred when possible")
 
+    def test_no_session_logs_means_no_usage_based_change(self):
+        huge = "Covers one more case of the shared workflow in detail. " * 20 + "Use when asked."
+        outside = pathlib.Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(shutil.rmtree, outside, True)
+        write_skill(outside / "quiet", "quiet", huge)
+        (self.root / ".claude" / "skills").mkdir(parents=True)
+        (self.root / ".claude" / "skills" / "quiet").symlink_to(outside / "quiet")
+        add_plugin(self.root, "kit", {"alpha": huge})
+        report = auto(self.root, apply=True, dedupe_plugins=True)
+        self.assertEqual(report["files"], [])
+        self.assertNotIn("skillOverrides", json.loads((self.root / ".claude" / "settings.json").read_text()))
+        self.assertTrue(any("no session logs" in note for note in report["notes"]))
+        self.assertFalse(any(item.startswith("plugin `") for item in report["recommendations"]))
+
+    def test_a_listing_choice_the_user_already_made_is_kept(self):
+        huge = "Covers one more case of the shared workflow in detail. " * 20 + "Use when asked."
+        outside = pathlib.Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(shutil.rmtree, outside, True)
+        for name in ("muted", "idle"):
+            write_skill(outside / name, name, huge)
+            (self.root / ".claude" / "skills").mkdir(parents=True, exist_ok=True)
+            (self.root / ".claude" / "skills" / name).symlink_to(outside / name)
+        (self.root / ".claude" / "settings.json").write_text(json.dumps({"skillOverrides": {"muted": "off"}}))
+        write_transcript(self.root, "something-else")
+        auto(self.root, apply=True)
+        settings = json.loads((self.root / ".claude" / "settings.json").read_text())
+        self.assertEqual(settings["skillOverrides"], {"muted": "off", "idle": "name-only"})
+        merged = json.loads(optimize.settings_content(self.root, {"skillOverrides": {"muted": "on", "new": "off"}}))
+        self.assertEqual(merged["skillOverrides"], {"muted": "off", "idle": "name-only", "new": "off"})
+
+    def test_project_transcripts_are_found_under_the_home_folder(self):
+        home = self.root / "home"
+        project = self.root / "work" / "my.app"
+        project.mkdir(parents=True)
+        encoded = "".join(char if char.isalnum() else "-" for char in str(project.resolve()))
+        logs = home / ".claude" / "projects" / encoded
+        logs.mkdir(parents=True)
+        (logs / "s.jsonl").write_text(json.dumps({"message": {"content": [
+            {"type": "tool_use", "name": "Skill", "input": {"skill": "deploy"}}]}}) + "\n")
+        (home / ".claude" / "projects" / "-other-project").mkdir()
+        (home / ".claude" / "projects" / "-other-project" / "s.jsonl").write_text("<command-name>/nope</command-name>\n")
+        usage = telemetry.scan(project, home=home)
+        self.assertEqual((usage["sessions"], usage["skills"]), (1, {"deploy": 1}))
+        self.assertEqual(telemetry.scan(home, home=home)["sessions"], 2, "the home root reads every project")
+
     def test_low_scoring_artifacts_get_the_mechanical_fixes(self):
         agents = self.root / ".claude" / "agents"
         agents.mkdir(parents=True)
@@ -1044,19 +1218,33 @@ class AutoImproveTest(ProjectCase):
                     "# SQL\n\nAlso reads *.json and *.json and *.json files.\n")
         write_skill(self.root / ".claude" / "skills" / "graph", "graph", "Builds a graph. Use when asked.",
                     "# Graph\n\nReads *.json, *.json, *.json and *.json.\n")
-        report = auto(self.root, apply=True)
+        self.assertFalse(any(key.endswith("sql/SKILL.md") for key in auto(self.root)["files"]), "paths are opt-in")
+        report = auto(self.root, apply=True, add_paths=True)
         fields, _, _ = frontmatter.read((agents / "old.md").read_text())
         self.assertEqual((fields["model"], fields["effort"]), ("claude-sonnet-5-5", "medium"))
         fields, _, _ = frontmatter.read((self.root / ".claude" / "skills" / "sql" / "SKILL.md").read_text())
         self.assertEqual(fields["paths"], ["**/*.sql"])
         graph = (self.root / ".claude" / "skills" / "graph" / "SKILL.md").read_text()
         self.assertNotIn("paths", frontmatter.read(graph)[0], "a glob in the body alone must not scope a skill")
+        flush = "name: x\ndescription: Formats *.sql files.\npaths:\n- \"db/**\""
+        self.assertEqual(auto_improve._add_paths(flush, frontmatter.parse(flush)), (flush, None))
+        self.assertEqual(optimize.replace_field(flush, "paths", "paths: []"),
+                         "name: x\ndescription: Formats *.sql files.\npaths: []")
         records = {record["path"]: record for record in report["scores"]["records"]}
         self.assertEqual(records[".claude/agents/old.md"]["fixes"],
                          ["model: claude-3-5-sonnet-20241022 -> claude-sonnet-5-5", "effort: medium"])
         self.assertEqual(report["scores"]["below_before"], 3)
         self.assertTrue(any("still under 85" in item for item in report["recommendations"]))
-        self.assertEqual(auto(self.root, apply=True)["files"], [])
+        self.assertEqual(auto(self.root, apply=True, add_paths=True)["files"], [])
+
+    def test_long_rule_bullets_are_cut_but_code_lines_are_not(self):
+        long_item = "- " + "x" * 30 + ": a list line inside a fenced block. It has two sentences and is well over the limit " + "y" * 80
+        sections = [("Rules", "\n".join(["## Rules", "", "```yaml", long_item, "```", "",
+                                          "- Keep every rule short. " + "This second sentence is long enough to push the bullet over the limit. " * 3]))]
+        shortened, full = auto_improve._shorten_rules(sections)
+        self.assertIn(long_item, shortened[0][1])
+        self.assertTrue(shortened[0][1].endswith("\n- Keep every rule short."))
+        self.assertEqual(len(full), 1)
 
     def test_script_extraction_is_opt_in_and_reported(self):
         block = "\n".join(f"echo step {n}" for n in range(25))

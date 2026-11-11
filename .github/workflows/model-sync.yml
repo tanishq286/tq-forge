@@ -9,9 +9,15 @@ name: Model sync
 # ANTHROPIC_API_KEY is optional. With it the ids come from Anthropic's
 # /v1/models; without it they come from OpenRouter's public model list.
 #
+# --trust-source lets the job act on OpenRouter's list when no API key is set.
+# That is acceptable here, and only here, because the result is a pull request
+# that a person reads before it is merged.
+#
 # Opening the pull request needs "Allow GitHub Actions to create and approve
 # pull requests" (Settings -> Actions -> General). Without it the branch is
-# still pushed and the job says so.
+# still pushed and the job says so. A pull request opened with GITHUB_TOKEN
+# does not start the CI workflow, so this job runs the test suite itself
+# before it pushes; re-run CI by hand on the pull request if you require it.
 
 on:
   schedule:
@@ -47,7 +53,7 @@ jobs:
       - name: Sync the model registry
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: node bin/cli.js sync-models --root . --apply
+        run: node bin/cli.js sync-models --root . --apply --trust-source
 
       - name: Run the test suite
         run: npm test
@@ -56,7 +62,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if git diff --quiet; then
+          if git diff --quiet -- config templates; then
             echo "No new Claude model. Nothing to do."
             exit 0
           fi

@@ -63,6 +63,7 @@ HYGIENE_MARK = "Context hygiene:"
 DEFAULT_EFFORT = "medium"
 SETTINGS_EFFORTS = ("low", "medium", "high", "xhigh")  # the values `effortLevel` accepts in settings.json
 KEEP = "keep"
+EXISTING_WINS = ("env", "skillOverrides")  # settings maps where a value the user already set is never replaced
 SETTINGS = ".claude/settings.json"
 HYGIENE_RULE = ".claude/rules/tq-forge-context-hygiene.md"
 SOAKERS = ("context-soaker", "test-soaker")
@@ -262,7 +263,7 @@ def replace_field(block, key, line):
     """Replace a frontmatter key (and its continuation lines) with one new line."""
     output, skipping, done = [], False, False
     for current in block.splitlines():
-        if skipping and (not current.strip() or current[:1].isspace()):
+        if skipping and (not current.strip() or current[:1].isspace() or current.startswith("- ")):
             continue
         skipping = False
         if not done and re.match(rf"^{re.escape(key)}\s*:", current):
@@ -506,7 +507,7 @@ def settings_content(root, patch):
             result[key] = {**current, **merged}
         elif isinstance(value, dict):
             current = settings.get(key) if isinstance(settings.get(key), dict) else {}
-            result[key] = {**value, **current} if key == "env" else {**current, **value}
+            result[key] = {**value, **current} if key in EXISTING_WINS else {**current, **value}
         elif isinstance(value, list):
             current = settings.get(key) if isinstance(settings.get(key), list) else []
             result[key] = [*current, *[v for v in value if v not in current]]

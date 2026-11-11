@@ -15,7 +15,9 @@ before the first apply, however many applies followed.
 `restore` trusts the manifest only inside the root. A file outside it (the
 target of a followed symlink) is restored only with `outside=True`, so a
 backup folder that arrived with a cloned project cannot make `restore` write
-or delete somewhere else on the machine.
+or delete somewhere else on the machine. For the same reason neither function
+works with a backup folder that is, or contains, a symlink, and `restore`
+never copies onto a symlink.
 """
 
 import json
@@ -41,19 +43,35 @@ def _within(folder, path):
     return resolved == folder or folder in resolved.parents
 
 
+def _refuse_links(backup_root):
+    """Stop when the backup folder is, or holds, a symlink: a copy through one lands outside it."""
+    if backup_root.is_symlink():
+        raise scaffold.ScaffoldError(f"{backup_root} is a symlink; remove it before running tq-forge here")
+    for folder, folders, files in os.walk(backup_root, followlinks=False):
+        for name in (*folders, *files):
+            if os.path.islink(os.path.join(folder, name)):
+                raise scaffold.ScaffoldError(
+                    f"{os.path.join(folder, name)} is a symlink inside {BACKUP_DIR}/; "
+                    f"remove {BACKUP_DIR}/ before running tq-forge here")
+
+
 def apply_writes(root, writes, backup=True, aliases=None, remove_links=None):
     """Write a plan into `root`. `backup=False` is the preview run on a scratch copy."""
     aliases, remove_links = aliases or {}, remove_links or {}
     backup_root = root / BACKUP_DIR
+    if backup:
+        _refuse_links(backup_root)
     manifest = context_cost.load_json(backup_root / MANIFEST)
     created = list(manifest.get("created", []))
     link_targets = dict(manifest.get("symlink_targets") or {})
     removed = dict(manifest.get("removed_links") or {})
-    for key, text in sorted(writes.items()):
+    # Phase 1: back everything up and record it, so a failure part-way through
+    # the writes below still leaves `restore` everything it needs.
+    for key in sorted(writes):
         target = root / key
         if key in created:
-            pass  # a file an earlier apply created has no original to keep
-        elif not target.exists():
+            continue  # a file an earlier apply created has no original to keep
+        if not target.exists():
             created.append(key)
         elif backup:
             saved = f"{LINK_BACKUPS}/{key.lstrip('/')}" if key in aliases else key
@@ -62,14 +80,9 @@ def apply_writes(root, writes, backup=True, aliases=None, remove_links=None):
                 shutil.copy2(target, backup_root / saved)
             if key in aliases:
                 link_targets.setdefault(key, saved)
-        scaffold.write_file(target, text, True, executable=key.endswith(".sh"))
     for relative in sorted(remove_links):
-        link = root / relative
-        if link.is_symlink():
-            removed.setdefault(relative, os.readlink(link))
-            link.unlink()
-        elif not backup and link.is_dir():
-            shutil.rmtree(link)  # the preview copy holds a real folder where the project has a link
+        if (root / relative).is_symlink():
+            removed.setdefault(relative, os.readlink(root / relative))
     if backup and (writes or remove_links):
         backup_root.mkdir(parents=True, exist_ok=True)
         record = {"created": created}
@@ -78,6 +91,15 @@ def apply_writes(root, writes, backup=True, aliases=None, remove_links=None):
         if removed:
             record["removed_links"] = removed
         (backup_root / MANIFEST).write_text(json.dumps(record, indent=2) + "\n")
+    # Phase 2: the changes themselves.
+    for key, text in sorted(writes.items()):
+        scaffold.write_file(root / key, text, True, executable=key.endswith(".sh"))
+    for relative in sorted(remove_links):
+        link = root / relative
+        if link.is_symlink():
+            link.unlink()
+        elif not backup and link.is_dir():
+            shutil.rmtree(link)  # the preview copy holds a real folder where the project has a link
 
 
 def _remove_empty_parents(root, folder):
@@ -110,7 +132,8 @@ def _restore_link_targets(root, backup_root, manifest, outside, restored, skippe
         if not source.is_file() or not _within(backup_root.resolve(), source):
             continue
         target = root / str(key)
-        if not (outside or _within(root, target)):
+        allowed = _within(root, target) or (outside and is_absolute(key))
+        if target.is_symlink() or not allowed:
             skipped.append(str(key))
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -118,10 +141,13 @@ def _restore_link_targets(root, backup_root, manifest, outside, restored, skippe
         restored.append(str(key))
 
 
-def _restore_links(root, manifest, restored):
+def _restore_links(root, manifest, outside, restored, skipped):
     for relative, target in sorted((manifest.get("removed_links") or {}).items()):
         link = root / str(relative)
         if is_absolute(relative) or not _within(root, link.parent) or link.exists() or link.is_symlink():
+            continue
+        if not (outside or _within(root, link.parent / str(target))):
+            skipped.append(str(relative))  # a link that points out of the root is recreated only with --outside
             continue
         link.parent.mkdir(parents=True, exist_ok=True)
         os.symlink(str(target), link)
@@ -137,6 +163,7 @@ def restore(root, outside=False):
     backup_root = root / BACKUP_DIR
     if not backup_root.is_dir():
         raise scaffold.ScaffoldError(f"no {BACKUP_DIR}/ in {root}; nothing to restore")
+    _refuse_links(backup_root)
     root = root.resolve()
     manifest = context_cost.load_json(backup_root / MANIFEST)
     restored, skipped = [], []
@@ -145,11 +172,15 @@ def restore(root, outside=False):
         relative = saved.relative_to(backup_root).as_posix()
         if relative == MANIFEST or relative.startswith(f"{LINK_BACKUPS}/"):
             continue
-        (root / relative).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(saved, root / relative)
+        target = root / relative
+        if target.is_symlink() or not (outside or _within(root, target.parent)):
+            skipped.append(relative)  # the path is now a link, or leads out of the root: do not write through it
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(saved, target)
         restored.append(relative)
     _restore_link_targets(root, backup_root, manifest, outside, restored, skipped)
-    _restore_links(root, manifest, restored)
+    _restore_links(root, manifest, outside, restored, skipped)
     if not skipped:
         shutil.rmtree(backup_root)
     return {"mode": "restored", "files": restored, "skipped": skipped}

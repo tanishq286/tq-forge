@@ -16,6 +16,7 @@ It is not a general YAML parser. A structure it cannot classify comes back as
 `Nested`, so callers can still tell that the key exists.
 """
 
+import json
 import re
 
 _FENCE = re.compile(r"\A---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\Z)", re.S)
@@ -37,8 +38,14 @@ def split(text):
 
 def _unquote(value):
     value = value.strip()
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-        return value[1:-1]
+    if len(value) >= 2 and value[0] == value[-1] == '"':
+        try:  # a double-quoted scalar carries escapes such as \" that must be decoded, not counted
+            decoded = json.loads(value)
+        except ValueError:
+            return value[1:-1]
+        return decoded if isinstance(decoded, str) else value[1:-1]
+    if len(value) >= 2 and value[0] == value[-1] == "'":
+        return value[1:-1].replace("''", "'")
     return value
 
 
@@ -85,8 +92,9 @@ def parse(frontmatter_text):
             continue
         key, value = match.group(1), _strip_comment(match.group(2))
         block = []
-        while index < len(lines) and (not lines[index].strip() or lines[index][:1].isspace()):
-            block.append(lines[index])
+        while index < len(lines) and (not lines[index].strip() or lines[index][:1].isspace()
+                                      or (not value and lines[index].startswith("- "))):
+            block.append(lines[index])  # YAML also allows list items flush with their key
             index += 1
         if value in _BLOCK_SCALARS:
             result[key] = " ".join(part.strip() for part in block if part.strip())

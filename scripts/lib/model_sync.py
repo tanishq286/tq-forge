@@ -17,7 +17,8 @@ version than the registry:
 Where the ids come from, in order:
 
   anthropic   GET https://api.anthropic.com/v1/models   (needs ANTHROPIC_API_KEY)
-  openrouter  GET https://openrouter.ai/api/v1/models   (public, includes prices)
+  openrouter  GET https://openrouter.ai/api/v1/models   (public, includes prices;
+              reported only, unless --trust-source is passed)
   offline     the registry itself, so nothing changes   (CI, air-gapped runs)
 
 These two GET requests are the only network calls tq-forge makes. They send
@@ -27,11 +28,12 @@ Dry run by default. --apply writes; files under --root are backed up to
 .tq-forge-backup/ like every other optimizer change.
 
 Usage: model_sync.py [--root DIR] [--source auto|anthropic|openrouter|offline]
-                     [--ids-file FILE] [--no-templates] [--apply] [--json]
+                     [--ids-file FILE] [--trust-source] [--no-templates] [--apply] [--json]
 """
 
 import argparse
 import datetime
+import http.client
 import json
 import os
 import pathlib
@@ -59,13 +61,15 @@ PAGE_SIZE = 1000
 MAX_PAGES = 20
 TIMEOUT_SECONDS = 15
 MAX_MAJOR_JUMP = 1
+MAX_MINOR_JUMP = 5  # 4.1 -> 4.5 has happened; 5.5 -> 5.99 has not
+TRUSTED_SOURCES = ("anthropic", "ids-file", "offline")
 PER_MILLION = 1_000_000
 SOURCES = ("auto", "anthropic", "openrouter", "offline")
 STAMP = "model-sync.json"
 
 _CURRENT = re.compile(r"^claude-(fable|mythos|opus|sonnet|haiku)-(\d{1,2})(?:-(\d{1,2}))?(?:-\d{8})?$")
 _LEGACY = re.compile(r"^claude-(\d{1,2})(?:-(\d{1,2}))?-(opus|sonnet|haiku)(?:-\d{8})?$")
-_MODEL_LINE = re.compile(r"^(model[ \t]*:[ \t]*)([\"']?)([^\s\"'#]+)\2([ \t]*(?:#.*)?)$", re.M)
+_MODEL_LINE = re.compile(r"^(model[ \t]*:[ \t]*)([\"']?)([^\s\"'#]+)\2([ \t]*(?:#[^\r\n]*)?\r?)$", re.M)
 
 
 # ------------------------------------------------------------------ ids
@@ -124,10 +128,25 @@ def upgrade_target(model_id, registry):
 
 # ------------------------------------------------------------ discovery
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Fail on a redirect instead of following it: urllib would resend the API key header to the new host."""
+
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 def _get_json(url, headers=None):
     request = urllib.request.Request(url, headers={"User-Agent": "tq-forge-model-sync", **(headers or {})})
-    with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:  # noqa: S310 (https constants)
+    with _OPENER.open(request, timeout=TIMEOUT_SECONDS) as response:  # noqa: S310 (https constants)
         return json.loads(response.read().decode("utf-8"))
+
+
+def _items(page):
+    data = page.get("data") if isinstance(page, dict) else None
+    return [item for item in data if isinstance(item, dict)] if isinstance(data, list) else []
 
 
 def _record(found, model_id, pricing=None):
@@ -145,7 +164,7 @@ def fetch_anthropic(api_key, get=_get_json):
     for _ in range(MAX_PAGES):
         url = f"{ANTHROPIC_URL}?limit={PAGE_SIZE}" + (f"&after_id={urllib.parse.quote(str(after), safe='')}" if after else "")
         page = get(url, {"x-api-key": api_key, "anthropic-version": ANTHROPIC_VERSION})
-        for item in page.get("data", []):
+        for item in _items(page):
             _record(found, item.get("id"))
         after = page.get("last_id")
         if not page.get("has_more") or not after:
@@ -162,14 +181,15 @@ def _per_million(value):
 
 def fetch_openrouter(get=_get_json):
     found = {}
-    for item in get(OPENROUTER_URL).get("data", []):
+    for item in _items(get(OPENROUTER_URL)):
         model_id = str(item.get("id", ""))
         if not model_id.startswith("anthropic/"):
             continue
         prices = item.get("pricing") if isinstance(item.get("pricing"), dict) else {}
         pricing = {"input": _per_million(prices.get("prompt")), "output": _per_million(prices.get("completion")),
                    "cache_read": _per_million(prices.get("input_cache_read")), "source": "openrouter"}
-        _record(found, model_id, pricing if pricing["input"] and pricing["output"] else None)
+        usable = (pricing["input"] or 0) > 0 and (pricing["output"] or 0) > 0 and (pricing["cache_read"] or 0) >= 0
+        _record(found, model_id, pricing if usable else None)
     return found
 
 
@@ -187,7 +207,8 @@ def discover(source="auto", environ=None, get=_get_json):
             continue
         try:
             found = fetch_anthropic(api_key, get) if name == "anthropic" else fetch_openrouter(get)
-        except (urllib.error.URLError, OSError, ValueError, AttributeError) as error:
+        except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError,
+                AttributeError, TypeError) as error:
             errors.append(f"{name}: {error}")
             continue
         if found:
@@ -205,6 +226,13 @@ def load_registry():
     return registry
 
 
+def _plausible(have, version):
+    """A release one step ahead of what the registry has, not an id someone made up."""
+    if version[0] == have[0]:
+        return version[1] - have[1] <= MAX_MINOR_JUMP
+    return version[0] - have[0] <= MAX_MAJOR_JUMP and version[1] <= MAX_MINOR_JUMP
+
+
 def plan_registry(registry, found, today=None):
     """Return (new_registry, {old_id: new_id}, notes) for the model ids in `found`."""
     today = today or datetime.date.today().isoformat()
@@ -220,12 +248,13 @@ def plan_registry(registry, found, today=None):
         if not current or family not in by_family:
             continue
         have = _version_of(updated, current)
-        newest = max(by_family[family])
-        if newest <= have:
+        newer = sorted(version for version in by_family[family] if version > have)
+        plausible = [version for version in newer if _plausible(have, version)]
+        notes.extend(f"{family}: ignored {canonical(family, version)}, too far ahead of {current} to trust"
+                     for version in newer if version not in plausible)
+        if not plausible:
             continue
-        if newest[0] - have[0] > MAX_MAJOR_JUMP:
-            notes.append(f"{family}: ignored {canonical(family, newest)}, too far ahead of {current} to trust")
-            continue
+        newest = plausible[-1]
         new_id = canonical(family, newest)
         previous = updated["models"][current]
         entry = {key: value for key, value in previous.items() if key != "superseded_by"}
@@ -248,8 +277,8 @@ def plan_registry(registry, found, today=None):
 
 def rewrite_model_field(text, registry):
     """Upgrade a pinned `model:` id in frontmatter. Returns (text, (old, new) or None)."""
-    block, body = frontmatter.split(text)
-    if block is None:
+    fence = frontmatter._FENCE.match(text)
+    if not fence:
         return text, None
     change = []
 
@@ -260,8 +289,10 @@ def rewrite_model_field(text, registry):
         change.append((match.group(3), target))
         return f"{match.group(1)}{match.group(2)}{target}{match.group(2)}{match.group(4)}"
 
-    new_block = _MODEL_LINE.sub(swap, block)
-    return (f"---\n{new_block}\n---\n{body}", change[0]) if change else (text, None)
+    new_block = _MODEL_LINE.sub(swap, fence.group(1))
+    if not change:
+        return text, None
+    return text[:fence.start(1)] + new_block + text[fence.end(1):], change[0]  # every other byte stays as it was
 
 
 def _upgrade_settings(settings, registry):
@@ -282,9 +313,10 @@ def _upgrade_settings(settings, registry):
         renamed = {}
         for name, entry in per_model.items():
             target = upgrade_target(name, registry)
-            if target and target not in per_model:
+            free = bool(target) and target not in per_model and target not in renamed
+            if free:
                 notes.append(f"settings: modelSettings {name} -> {target}")
-            renamed[target if target and target not in per_model else name] = entry
+            renamed[target if free else name] = entry  # two old ids never collapse into one entry
         result["modelSettings"] = renamed
     return result, notes
 
@@ -379,11 +411,21 @@ def _stamp(upgrades):
 
 # -------------------------------------------------------------------- cli
 
-def sync(root, found, source="offline", apply=False, templates=True, package=None, errors=()):
-    """Plan (and with `apply`, write) one sync. Returns the report dict."""
+def sync(root, found, source="offline", apply=False, templates=True, package=None, errors=(), trusted=True):
+    """Plan (and with `apply`, write) one sync. Returns the report dict.
+
+    A model list that did not come from Anthropic is reported, not acted on,
+    unless the caller marks it `trusted`: a wrong id there would otherwise be
+    written into every pinned `model:` field.
+    """
     package = pathlib.Path(package) if package else models.GENERATIONS_FILE.parents[1]
     old_registry = load_registry()
     registry, upgrades, notes = plan_registry(old_registry, found)
+    pending = {}
+    if upgrades and not trusted:
+        pending, registry, upgrades = upgrades, old_registry, {}
+        notes = [f"unverified: {old} -> {new} was reported by {source}, not by Anthropic. Nothing was changed. "
+                 f"Set ANTHROPIC_API_KEY, or check the id and pass --trust-source." for old, new in pending.items()]
     plan = plan_root(root, registry)
     package_writes = plan_package(package, registry, old_registry, upgrades) if templates else {}
     package_writes = {path: text for path, text in package_writes.items()
@@ -400,6 +442,7 @@ def sync(root, found, source="offline", apply=False, templates=True, package=Non
         "source": source,
         "discovered": len(found),
         "upgrades": upgrades,
+        "pending": pending,
         "pair": registry.get("pair", {}),
         "files": report["files"],
         "package_files": sorted(written),
@@ -413,6 +456,8 @@ def render(report):
              f"{report['discovered']} Claude model ids seen)"]
     if report["upgrades"]:
         lines.extend(f"  new: {old} -> {new}" for old, new in report["upgrades"].items())
+    elif report.get("pending"):
+        lines.extend(f"  seen, not applied: {old} -> {new}" for old, new in report["pending"].items())
     else:
         lines.append("  the registry is current; no newer model found")
     pair = report["pair"]
@@ -431,6 +476,8 @@ def build_parser():
     parser.add_argument("--source", choices=SOURCES, default="auto", help="where to read live model ids from")
     parser.add_argument("--offline", action="store_true", help="same as --source offline")
     parser.add_argument("--ids-file", help="JSON list of model ids to use instead of a network source")
+    parser.add_argument("--trust-source", action="store_true",
+                        help="act on a model list from OpenRouter (by default only Anthropic's own list is acted on)")
     parser.add_argument("--no-templates", action="store_true",
                         help="leave the tq-forge registry and templates alone; only upgrade --root")
     parser.add_argument("--apply", action="store_true", help="write the changes (default is a dry run)")
@@ -457,7 +504,8 @@ def run(args):
     else:
         result = discover("offline" if args.offline else args.source)
     return sync(root, result["models"], result["source"], args.apply and not args.dry_run,
-                not args.no_templates, errors=result["errors"])
+                not args.no_templates, errors=result["errors"],
+                trusted=args.trust_source or result["source"] in TRUSTED_SOURCES)
 
 
 def main(argv):

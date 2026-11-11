@@ -10,17 +10,23 @@ and plans these changes on top:
 
   claude_md  a CLAUDE.md over 300 tokens keeps its rule sections; every other
              section moves into an on-demand skill (`reference.md` plus a
-             140-character trigger), and a one-line pointer stays behind
-  rules      a rule file over the threshold with no `paths:` gets source-file
-             globs, so it loads when Claude reads code instead of every turn
+             140-character trigger), and a one-line pointer stays behind. A
+             kept rule bullet over 160 characters keeps its first sentence;
+             its full wording moves to reference.md with the rest
+  rules      with --scope-rules: a rule file over the threshold with no
+             `paths:` gets any-file globs, so it loads the first time Claude
+             touches a file instead of on every turn
   skills     descriptions are cut to 140 characters; a skill that still costs
              more than the threshold and was never invoked is listed by name only
   plugins    with --dedupe-plugins: a symlinked skill that a plugin also loads
              is unlinked, and idle plugin skills over the threshold are compacted
+
+Usage is evidence only when there are session logs to read. With none, every
+usage-based step is skipped and the report says so.
   upgrade    a skill or subagent scoring under 85 gets the mechanical fixes:
-             `paths:` when its description says which file types it is for,
-             outdated `model:` ids replaced, a missing `effort` filled in, and
-             with --extract-scripts long shell blocks moved to scripts/
+             outdated `model:` ids replaced and a missing `effort` filled in;
+             with --add-paths, `paths:` for the file types its description
+             names; with --extract-scripts, long shell blocks moved to scripts/
 
 What it will not do: write missing sections for you, turn off a plugin, or
 (unless asked) turn the shell examples in a skill into scripts. A skill's code
@@ -30,8 +36,8 @@ changes what the skill tells Claude. Those are listed as recommendations.
 Dry run by default. --apply writes after backing up to .tq-forge-backup/;
 `tq-forge restore` undoes it.
 
-Usage: auto_improve.py [--root DIR] [--apply] [--follow-symlinks] [--dedupe-plugins]
-                       [--extract-scripts] [--threshold N] [--min-score N] [--json]
+Usage: auto_improve.py [--root DIR] [--apply] [--follow-symlinks] [--dedupe-plugins] [--scope-rules]
+                       [--add-paths] [--extract-scripts] [--threshold N] [--min-score N] [--json]
 """
 
 import argparse
@@ -70,8 +76,7 @@ GENERIC_SKILL = "project-reference"
 KEEP_TITLE = re.compile(r"\b(rules?|conventions?|guidelines|norms|style|build|tests?|testing|commands?)\b", re.I)
 FLOW_MARK = re.compile(r"claude-flow|ruflo", re.I)
 EXTENSION = re.compile(r"\*\.([A-Za-z0-9]{1,5})\b")
-SOURCE_GLOBS = ("**/*.{js,jsx,ts,tsx,mjs,cjs}", "**/*.{py,go,rs,java,kt,swift,rb,php,cs}",
-                "**/*.{c,cc,cpp,h,hpp,sh,sql}")
+FILE_GLOBS = ("**/*", "**/.*", "**/.*/**")  # any file in the working folder, dotfiles included
 
 
 def _tokens(text):
@@ -84,10 +89,12 @@ def _shorten_rules(sections):
     """Cut long rule bullets to their first sentence. Returns (sections, the full lines that were cut)."""
     shortened, full = [], []
     for title, section in sections:
-        lines = []
+        lines, fenced = [], False
         for line in section.splitlines():
+            if line.lstrip().startswith("```"):
+                fenced = not fenced
             first = re.split(r"(?<=[.!?])\s+", line, maxsplit=1)[0]
-            is_bullet = line.lstrip().startswith(("- ", "* "))
+            is_bullet = not fenced and line.lstrip().startswith(("- ", "* "))  # never cut a line of code
             if is_bullet and len(line) > RULE_LINE_LIMIT and MIN_FIRST_SENTENCE <= len(first) < len(line):
                 lines.append(first)
                 full.append(line)
@@ -188,36 +195,56 @@ def plan_claude_md(root, text=None, workers=()):
 
 # ------------------------------------------------------- idle-bloat rules
 
-def plan_idle_rules(root, threshold):
-    """Give always-loaded rule files over the threshold a `paths:` scope of source files."""
-    plan = optimize.new_plan()
-    scope = "paths:\n" + "".join(f"  - {json.dumps(glob)}\n" for glob in SOURCE_GLOBS)
+def big_rules(root, threshold):
+    """[(relative path, text)] of rule files that load on every turn and cost more than the threshold."""
+    found = []
     for path in context_cost.rule_files(root):
         relative = path.relative_to(root).as_posix()
         text = context_cost.read_text(path)
-        block, body = frontmatter.split(text)
+        block, _ = frontmatter.split(text)
         if relative == optimize.HYGIENE_RULE or "paths" in frontmatter.parse(block) or _tokens(text) <= threshold:
             continue  # a file that already has a `paths:` key, even an empty one, is the author's call
+        found.append((relative, text))
+    return found
+
+
+def plan_idle_rules(root, threshold):
+    """Give always-loaded rule files over the threshold a `paths:` scope of "any file".
+
+    Such a rule then loads the first time Claude reads or edits a file in the
+    working folder. It is absent from a session that touches no file, which is
+    wrong for a rule about how to talk or answer, so this step is opt-in.
+    """
+    plan = optimize.new_plan()
+    scope = "paths:\n" + "".join(f"  - {json.dumps(glob)}\n" for glob in FILE_GLOBS)
+    for relative, text in big_rules(root, threshold):
+        block, body = frontmatter.split(text)
         reason = optimize.skip_reason(root, relative)
         if reason:
             plan["warnings"].append(f"rules: {relative} {reason}; still loads on every turn")
             continue
         plan["writes"][relative] = (f"---\n{scope}---\n\n{text.lstrip()}" if block is None
                                     else f"---\n{block}\n{scope}---\n{body}")
-        plan["notes"].append(f"rules: {relative} ({_tokens(text)} tokens) now loads when a source file is read")
+        plan["notes"].append(f"rules: {relative} ({_tokens(text)} tokens) now loads on the first file touched")
     return plan
 
 
 def plan_idle_skills(root, usage, threshold, base):
     """List by name only the skills that stay over the threshold and were never invoked."""
     plan = optimize.new_plan()
+    if not usage["sessions"]:
+        return plan  # no session logs, so no evidence that anything is unused
     overlay = {str((root / key).resolve()): text for key, text in base["writes"].items()}
     removed = set(base.get("remove_links", {}))
+    chosen = context_cost.load_json(root / optimize.SETTINGS).get("skillOverrides")
+    chosen = chosen if isinstance(chosen, dict) else {}
     quiet = {}
     for path in context_cost.skill_files(root):
         if path.parent.relative_to(root).as_posix() in removed:
             continue
         name = context_cost.skill_name(path, overlay)
+        if name in chosen:
+            continue  # the user already decided how this skill is listed
         listing = f"{name}: {context_cost._described(path, overlay)}"
         if _tokens(listing) > threshold and telemetry.uses(usage, name) == 0:
             quiet[name] = "name-only"
@@ -232,7 +259,8 @@ def idle_plugin_selector(usage, threshold, twins=()):
     """Pick plugin skills to compact: idle ones over the threshold, and the twins of unlinked skills."""
     def select(item):
         listing = f"{item['plugin']}:{item['name']}: {context_cost._described(item['path'])}"
-        idle = _tokens(listing) > threshold and telemetry.uses(usage, item["name"], item["plugin"]) == 0
+        idle = (usage["sessions"] > 0 and _tokens(listing) > threshold
+                and telemetry.uses(usage, item["name"], item["plugin"]) == 0)
         return idle or item["name"] in twins
     return select
 
@@ -253,12 +281,13 @@ def _score_text(kind, text, filename):
 
 
 def _add_paths(block, fields):
-    """Add `paths:` when the description itself says which file types the skill is for.
+    """Add `paths:` for the file types the description names. Opt-in (--add-paths).
 
-    A glob in the body is not enough: skills mention file types in passing, and
-    `paths:` stops Claude from loading the skill for any other file.
+    `paths:` stops Claude from loading the skill for any other file, and a
+    description can name a file type it does not work on ("skips *.lock"), so
+    this only runs when asked and the result needs a look.
     """
-    if fields.get("paths"):
+    if "paths" in fields:
         return block, None
     described = f"{fields.get('description', '')} {fields.get('when_to_use', '')}"
     chosen = list(dict.fromkeys(match.lower() for match in EXTENSION.findall(described)))[:PATHS_MAX]
@@ -279,7 +308,7 @@ def _add_effort(text, registry):
         f"effort: {known['effort']}"
 
 
-def _fix(kind, text, folder, registry, extract):
+def _fix(kind, text, folder, registry, extract, add_paths):
     """Apply the mechanical fixes. Returns (text, [fix names], {script name: text})."""
     fixes, scripts = [], {}
     text, change = model_sync.rewrite_model_field(text, registry)
@@ -291,7 +320,9 @@ def _fix(kind, text, folder, registry, extract):
     if kind == "subagent":
         text, added = _add_effort(text, registry)
         return text, fixes + ([added] if added else []), scripts
-    block, added = _add_paths(block, frontmatter.parse(block))
+    added = None
+    if add_paths:
+        block, added = _add_paths(block, frontmatter.parse(block))
     if added:
         fixes.append(added)
     if extract and not (folder / "scripts").exists():
@@ -301,7 +332,7 @@ def _fix(kind, text, folder, registry, extract):
     return f"---\n{block}\n---\n{body}", fixes, scripts
 
 
-def plan_upgrades(root, base, min_score, follow, extract=False):
+def plan_upgrades(root, base, min_score, follow, extract=False, add_paths=False):
     """Fix every skill and subagent under `min_score`. Returns (plan, score records)."""
     plan, records = optimize.new_plan(), []
     registry = models.generations()
@@ -327,7 +358,7 @@ def plan_upgrades(root, base, min_score, follow, extract=False):
         base_key = optimize.write_base(root, path.parent) if linked else path.parent.relative_to(root).as_posix()
         key = f"{base_key}/{path.name}"
         text = base["writes"].get(key, context_cost.read_text(path))
-        fixed, fixes, scripts = _fix(kind, text, path.parent, registry, extract)
+        fixed, fixes, scripts = _fix(kind, text, path.parent, registry, extract, add_paths)
         record["fixes"] = fixes
         for name, content in {path.name: fixed, **scripts}.items():
             if name == path.name and fixed == text:
@@ -345,6 +376,8 @@ def plan_upgrades(root, base, min_score, follow, extract=False):
 
 def _unused_plugins(root, usage):
     """One recommendation per enabled plugin whose skills were never invoked."""
+    if not usage["sessions"]:
+        return []
     by_plugin = collections.defaultdict(list)
     for item in context_cost.plugin_skills(root):
         by_plugin[item["plugin"]].append(item)
@@ -388,13 +421,20 @@ def build_plan(root, options):
             base, dedupe,
             linkdedupe.plan_plugin_skills(root, options["description_limit"],
                                           idle_plugin_selector(usage, threshold, twins)))
-    if not options["keep_rules"]:
+    if not usage["sessions"]:
+        base["notes"].append("usage: no session logs found for this root; usage-based steps were skipped")
+    if options["scope_rules"]:
         base = optimize.merge_plans(base, plan_idle_rules(root, threshold))
     base = optimize.merge_plans(base, plan_idle_skills(root, usage, threshold, base))
     upgrades, records = plan_upgrades(root, base, options["min_score"], options["follow_symlinks"],
-                                      options["extract_scripts"])
+                                      options["extract_scripts"], options["add_paths"])
     still_low = [record for record in records if record["after"] < options["min_score"]]
     advice = _unused_plugins(root, usage) if options["dedupe_plugins"] else []
+    unscoped = [] if options["scope_rules"] else big_rules(root, threshold)
+    if unscoped:
+        advice.append(f"{len(unscoped)} rule file(s) load on every turn and cost about "
+                      f"{sum(_tokens(text) for _, text in unscoped)} tokens. --scope-rules makes them load on the "
+                      f"first file touched instead; leave it off for rules about how to talk or answer.")
     long_blocks = _long_blocks(root) if not options["extract_scripts"] else 0
     if long_blocks:
         advice.append(f"{long_blocks} shell block(s) of {LONG_SCRIPT_LINES}+ lines sit inline in skills. "
@@ -431,8 +471,9 @@ def run(args):
     inventory = context_cost.load_json(pathlib.Path(args.mcp_inventory)) if args.mcp_inventory else None
     options = {"threshold": args.threshold, "min_score": args.min_score,
                "description_limit": args.description_limit, "follow_symlinks": args.follow_symlinks,
-               "dedupe_plugins": args.dedupe_plugins, "keep_rules": args.keep_rules,
-               "keep_mcp": optimize._names(args.keep_mcp), "extract_scripts": args.extract_scripts}
+               "dedupe_plugins": args.dedupe_plugins, "scope_rules": args.scope_rules,
+               "keep_mcp": optimize._names(args.keep_mcp), "extract_scripts": args.extract_scripts,
+               "add_paths": args.add_paths}
     plan, extras = build_plan(root, options)
     report = optimize.build_report(root, plan, inventory, args.apply and not args.dry_run,
                                    args.dedupe_plugins, args.listing_budget)
@@ -456,7 +497,12 @@ def build_parser():
     parser.add_argument("--description-limit", type=int, default=DESCRIPTION_LIMIT, metavar="CHARS",
                         help=f"longest skill description to keep (default {DESCRIPTION_LIMIT})")
     parser.add_argument("--keep-mcp", help="MCP servers to leave in .mcp.json")
-    parser.add_argument("--keep-rules", action="store_true", help="do not add `paths:` to always-loaded rule files")
+    parser.add_argument("--scope-rules", action="store_true",
+                        help="give always-loaded rule files over the threshold `paths:` so they load on the "
+                             "first file touched, not on every turn")
+    parser.add_argument("--add-paths", action="store_true",
+                        help="also give low-scoring skills `paths:` for the file types their description names "
+                             "(review the result)")
     parser.add_argument("--extract-scripts", action="store_true",
                         help="also move long shell blocks of low-scoring skills into scripts/ (review the result)")
     parser.add_argument("--mcp-inventory", help="JSON file with each MCP server's tool names and instructions")

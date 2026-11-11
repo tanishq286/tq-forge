@@ -10,7 +10,7 @@
 #
 # Usage:
 #   auto-improve.sh [--root DIR] [--apply] [--follow-symlinks] [--dedupe-plugins]
-#                   [--extract-scripts] [--keep-rules] [--keep-mcp a,b]
+#                   [--scope-rules] [--extract-scripts] [--keep-mcp a,b]
 #                   [--threshold TOKENS] [--min-score N] [--description-limit CHARS]
 #                   [--mcp-inventory FILE] [--listing-budget CHARS] [--json]
 #
