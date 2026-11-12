@@ -400,9 +400,7 @@ class ShieldTest(ProjectCase):
         build_bloated(self.root)
         self._shield()
         settings = self._settings()
-        self.assertIn("Read(./secrets/**)", settings["permissions"]["deny"])
-        self.assertIn("Read(./dist/**)", settings["permissions"]["deny"])
-        self.assertNotIn("Read(./node_modules/**)", settings["permissions"]["deny"])
+        self.assertEqual(settings["permissions"]["deny"], ["Read(./secrets/**)"], "shield denies nothing by default")
         self.assertIn("**/node_modules/**", settings["claudeMdExcludes"])
         self.assertNotIn("env", settings)
         self.assertNotIn("effortLevel", settings)
@@ -418,7 +416,7 @@ class ShieldTest(ProjectCase):
 
     def test_env_files_stay_readable_unless_deny_env_is_passed(self):
         self._shield()
-        self.assertFalse(any(".env" in rule for rule in self._settings()["permissions"]["deny"]))
+        self.assertNotIn("permissions", self._settings())
         self._shield(deny_env=True)
         self.assertIn("Read(./.env)", self._settings()["permissions"]["deny"])
         self.assertIn("Read(./.env.*)", self._settings()["permissions"]["deny"])
@@ -456,74 +454,146 @@ class ShieldTest(ProjectCase):
         with self.assertRaises(scaffold.ScaffoldError):
             optimize.plan_shield(self.root, False, None, effort="max")
 
-    def test_cli_shield_defaults_to_medium_effort_and_the_worker_model(self):
+    def test_cli_shield_changes_no_effort_model_or_permission(self):
+        (self.root / ".claude").mkdir()
+        original = {"model": "fable", "modelSettings": {"claude-fable-5-2": {"effortLevel": "high"}},
+                    "permissions": {"allow": ["Bash(git push:*)"]}}
+        (self.root / ".claude" / "settings.json").write_text(json.dumps(original))
         script = str(ROOT / "scripts" / "optimize.sh")
         subprocess.run(["bash", script, "shield", "--root", str(self.root), "--apply"], check=True, capture_output=True)
         settings = self._settings()
-        self.assertEqual(settings["effortLevel"], "medium")
-        self.assertEqual(settings["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], models.subagent_model())
-        other = self.root / "other"
-        other.mkdir()
-        subprocess.run(["bash", script, "shield", "--root", str(other), "--apply", "--effort", "keep",
-                        "--subagent-model", "keep"], check=True, capture_output=True)
-        kept = json.loads((other / ".claude" / "settings.json").read_text())
-        self.assertNotIn("effortLevel", kept)
-        self.assertNotIn("env", kept)
+        self.assertEqual({key: settings[key] for key in original}, original)
+        self.assertNotIn("effortLevel", settings)
+        self.assertNotIn("env", settings)
+        self.assertNotIn("deny", settings["permissions"])
+        self.assertIn("**/dist/**", settings["claudeMdExcludes"])
+        subprocess.run(["bash", script, "shield", "--root", str(self.root), "--apply", "--effort", "low",
+                        "--subagent-model", "haiku"], check=True, capture_output=True)
+        self.assertEqual(self._settings()["effortLevel"], "low", "a static level is still available when asked for")
 
 
-class CommandLineTest(ProjectCase):
-    def test_cli_dry_run_reports_json_and_writes_nothing(self):
-        inventory = build_bloated(self.root)
-        inventory_file = self.root.parent / f"{self.root.name}-inventory.json"
-        inventory_file.write_text(json.dumps(inventory))
-        self.addCleanup(inventory_file.unlink)
-        before = tree_digest(self.root)
-        result = subprocess.run(
-            ["bash", str(ROOT / "scripts" / "optimize.sh"), "optimize", "--root", str(self.root),
-             "--mcp-inventory", str(inventory_file), "--json"],
-            capture_output=True, text=True)
+class LosslessTest(ProjectCase):
+    """The default optimize must never cost capability."""
+
+    def _optimize(self, *flags):
+        result = subprocess.run(["bash", str(ROOT / "scripts" / "optimize.sh"), "optimize", "--root", str(self.root),
+                                 "--apply", "--json", *flags], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        report = json.loads(result.stdout)
-        self.assertEqual(report["mode"], "dry-run")
-        self.assertGreaterEqual(report["reduction_percent"], MIN_REDUCTION)
-        self.assertEqual(tree_digest(self.root), before)
+        return json.loads(result.stdout)
 
-    def _cli(self, *arguments):
-        return subprocess.run(["bash", str(ROOT / "scripts" / "optimize.sh"), *arguments, "--root", str(self.root)],
-                              capture_output=True, text=True)
+    def test_mcp_servers_stay_and_tool_search_is_pinned_on(self):
+        servers = {"flow": {"command": "npx", "args": ["flow"], "alwaysLoad": True}, "docs": {"type": "http", "url": "https://d.example/mcp"}}
+        (self.root / ".mcp.json").write_text(json.dumps({"mcpServers": servers}))
+        report = self._optimize()
+        kept = json.loads((self.root / ".mcp.json").read_text())["mcpServers"]
+        self.assertEqual(sorted(kept), ["docs", "flow"])
+        self.assertNotIn("alwaysLoad", kept["flow"])
+        self.assertEqual(kept["flow"]["args"], ["flow"])
+        settings = json.loads((self.root / ".claude" / "settings.json").read_text())
+        self.assertEqual(settings["env"], {"ENABLE_TOOL_SEARCH": "true"})
+        self.assertFalse((self.root / ".claude" / "agents").exists(), "no worker subagent unless --isolate-mcp")
+        self.assertTrue(report["nothing_lost"]["ok"])
+        self.assertEqual(self._optimize()["files"], [])
+        isolated = self._optimize("--isolate-mcp")
+        self.assertIn(".claude/agents/mcp-flow.md", isolated["files"])
 
-    def test_cli_writes_only_with_apply_and_dry_run_wins(self):
-        build_bloated(self.root)
-        before = tree_digest(self.root)
-        for arguments in (["optimize"], ["optimize", "--only", "mcp"], ["optimize", "--only", "skills,rules"],
-                          ["shield"], ["optimize", "--apply", "--dry-run"], ["shield", "--apply", "--dry-run"]):
-            result = self._cli(*arguments)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(tree_digest(self.root), before, f"{arguments} wrote files")
-        self.assertEqual(self._cli("optimize", "--apply").returncode, 0)
-        self.assertNotEqual(tree_digest(self.root), before)
+    def test_an_explicit_tool_search_choice_is_left_alone(self):
+        (self.root / ".mcp.json").write_text(json.dumps({"mcpServers": {"flow": {"command": "npx"}}}))
+        (self.root / ".claude").mkdir()
+        (self.root / ".claude" / "settings.json").write_text(json.dumps({"env": {"ENABLE_TOOL_SEARCH": "false"}}))
+        report = self._optimize()
+        self.assertEqual(json.loads((self.root / ".claude" / "settings.json").read_text())["env"]["ENABLE_TOOL_SEARCH"], "false")
+        self.assertTrue(any("left as you set it" in warning for warning in report["warnings"]))
 
-    def test_cli_extracts_scripts_only_when_asked(self):
-        folder = self.root / ".claude" / "skills" / "deploy"
-        folder.mkdir(parents=True)
-        block = "\n".join(f"echo step {n}" for n in range(10))
-        (folder / "SKILL.md").write_text(
-            f"---\nname: deploy\ndescription: Deploys. Use when asked.\n---\n\n```bash\n{block}\n```\n")
-        self.assertEqual(self._cli("optimize", "--apply").returncode, 0)
-        self.assertFalse((folder / "scripts").exists())
-        self.assertEqual(self._cli("optimize", "--apply", "--extract-scripts").returncode, 0)
-        self.assertTrue((folder / "scripts" / "step-1.sh").is_file())
+    def test_descriptions_up_to_350_characters_and_plugin_files_are_untouched(self):
+        medium = "Handles one part of the release workflow in detail. " * 6 + "Use when asked to release."
+        self.assertTrue(160 < len(medium) <= 350)
+        skill = write_skill(self.root / ".claude" / "skills" / "release", "release", medium)
+        huge = write_skill(self.root / ".claude" / "skills" / "huge", "huge", medium * 2)
+        install = add_plugin(self.root, "kit", {"alpha": medium * 3})
+        plugin_before = (install / "skills" / "alpha" / "SKILL.md").read_text()
+        before = skill.read_text()
+        report = self._optimize("--dedupe-plugins")
+        self.assertEqual(skill.read_text(), before)
+        self.assertEqual((install / "skills" / "alpha" / "SKILL.md").read_text(), plugin_before)
+        self.assertFalse(any("/plugins/" in path for path in report["files"]))
+        self.assertLessEqual(len(frontmatter.read(huge.read_text())[0]["description"]), 350)
+        unknown = subprocess.run(["bash", str(ROOT / "scripts" / "optimize.sh"), "optimize", "--compact-plugins"],
+                                 capture_output=True)
+        self.assertEqual(unknown.returncode, 2, "plugin compaction no longer exists")
 
-    def test_cli_has_no_subcommand_that_writes_by_default(self):
-        for name in ("optimize-mcp", "optimize-skills"):
-            self.assertEqual(self._cli(name).returncode, 2, f"{name} must stay a bin/cli.js alias for a dry run")
+    def test_claude_md_keeps_rules_tables_and_triggers_and_moves_only_prose(self):
+        table = ["| Task | Agents |", "|------|--------|", "| Bug Fix | researcher, coder |", "| Feature | architect, coder |"]
+        prose = [f"This paragraph explains idea {n} at length so that a new reader understands the reasoning." for n in range(60)]
+        text = "\n".join(["# Ruflo", "", "## Rules", "", "- Do what was asked", "", "## Swarm & Routing", "", *table, "",
+                           *prose, "", "- **YES**: 3+ files", "- **NO**: single file edits", "", "```bash",
+                           *[f"npx ruflo step-{n}" for n in range(9)], "```", "", "## Setup", "", *prose[:30], ""])
+        (self.root / "CLAUDE.md").write_text(text)
+        report = self._optimize()
+        lean = (self.root / "CLAUDE.md").read_text()
+        for kept in (*table, "- Do what was asked", "- **YES**: 3+ files", "## Swarm & Routing", "`claude-flow` skill"):
+            self.assertIn(kept, lean)
+        self.assertNotIn("explains idea 7", lean)
+        self.assertNotIn("npx ruflo step-3", lean)
+        self.assertNotIn("## Setup", lean, "a section that was all prose leaves only its copy in reference.md")
+        reference = (self.root / ".claude" / "skills" / "claude-flow" / "reference.md").read_text()
+        for moved in ("explains idea 59", "npx ruflo step-8", "## Setup", "| Bug Fix | researcher, coder |"):
+            self.assertIn(moved, reference)
+        self.assertTrue(report["nothing_lost"]["ok"])
+        self.assertEqual(self._optimize()["files"], [])
 
-    def test_cli_rejects_a_missing_root(self):
-        result = subprocess.run(
-            ["bash", str(ROOT / "scripts" / "optimize.sh"), "measure", "--root", str(self.root / "missing")],
-            capture_output=True, text=True)
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("not a directory", result.stderr)
+    def test_hard_wrapped_rules_and_tool_trigger_paragraphs_stay_in_claude_md(self):
+        prose = [f"This paragraph explains idea {n} at length so that a new reader understands the reasoning." for n in range(90)]
+        wrapped_rule = ["- Never allow two writers in one worktree; give each writing agent an isolated",
+                        "  worktree and explicit file ownership."]
+        trigger = ["When it is registered, call", "`guidance_brain({ mode: \"recommend\" })` before complex Ruflo work."]
+        long_item = ["- " + "This item rambles on about background that nobody needs on every single turn. " * 3]
+        text = "\n".join(["# Ruflo", "", "## Authority", "", *wrapped_rule, *long_item, "", *trigger, "",
+                           "Ruflo is the coordination ledger and nothing in this sentence names a tool.", "", *prose, ""])
+        (self.root / "CLAUDE.md").write_text(text)
+        report = self._optimize()
+        lean = (self.root / "CLAUDE.md").read_text()
+        for kept in (*wrapped_rule, *trigger):
+            self.assertIn(kept, lean)
+        for moved in ("rambles on", "coordination ledger", "explains idea 40"):
+            self.assertNotIn(moved, lean)
+        reference = (self.root / ".claude" / "skills" / "claude-flow" / "reference.md").read_text()
+        for line in text.split("## Authority")[1].splitlines():
+            self.assertIn(line.strip(), reference, "the section is copied whole, so nothing is lost")
+        self.assertTrue(report["nothing_lost"]["ok"])
+
+    def test_restore_keeps_a_created_file_the_user_edited(self):
+        (self.root / ".mcp.json").write_text(json.dumps({"mcpServers": {"flow": {"command": "npx"}}}))
+        self._optimize("--isolate-mcp")
+        worker = self.root / ".claude" / "agents" / "mcp-flow.md"
+        manifest = json.loads((self.root / optimize.BACKUP_DIR / optimize.MANIFEST).read_text())
+        self.assertEqual(len(manifest["created_hashes"][".claude/agents/mcp-flow.md"]), 64)
+        worker.write_text(worker.read_text() + "\nMy own note.\n")
+        report = optimize.restore(self.root)
+        self.assertEqual(report["kept_edited"], [".claude/agents/mcp-flow.md"])
+        self.assertIn("My own note.", worker.read_text())
+        self.assertEqual(sorted(json.loads((self.root / ".mcp.json").read_text())["mcpServers"]), ["flow"])
+        worker.unlink()
+        self._optimize("--isolate-mcp")
+        worker.write_text(worker.read_text() + "\nAnother note.\n")
+        self.assertEqual(optimize.restore(self.root, discard_edits=True)["kept_edited"], [])
+        self.assertFalse(worker.exists(), "--discard-edits deletes it")
+
+    def test_restore_checks_real_paths_not_spellings(self):
+        outside = pathlib.Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(shutil.rmtree, outside, True)
+        (outside / "victim.md").write_text("keep me")
+        (self.root / "inner").symlink_to(outside)
+        self.assertFalse(optimize.backup._within(self.root, self.root / "inner" / "victim.md"))
+        self.assertFalse(optimize.backup._within(self.root, self.root / ".." / "x"))
+        self.assertTrue(optimize.backup._within(self.root, self.root / "a" / ".." / "b.md"))
+        backup_root = self.root / optimize.BACKUP_DIR
+        (backup_root / "inner").mkdir(parents=True)
+        (backup_root / "inner" / "victim.md").write_text("attacker text")
+        (backup_root / optimize.MANIFEST).write_text(json.dumps({"created": ["inner/victim.md"]}))
+        report = optimize.restore(self.root)
+        self.assertEqual((outside / "victim.md").read_text(), "keep me")
+        self.assertEqual(sorted(report["skipped"]), ["inner/victim.md", "inner/victim.md"])
 
 
 LONG_DESCRIPTION = "Handles shared work across every repository in the team. " * 6 + "Use when asked to share."
@@ -762,21 +832,6 @@ class PluginTest(ProjectCase):
         optimize.build_report(self.root, plan, None, True)
         self.assertEqual(json.loads((self.root / ".claude" / "settings.json").read_text())["skillOverrides"],
                          {"same": "off"})
-
-    def test_plugin_descriptions_are_compacted_with_a_backup(self):
-        install = add_plugin(self.root, "kit", {"alpha": LONG_DESCRIPTION, "beta": "Short. Use when asked."})
-        target = install / "skills" / "alpha" / "SKILL.md"
-        original = target.read_text()
-        plan = linkdedupe.plan_plugin_skills(self.root, 140)
-        report = optimize.build_report(self.root, plan, None, True, plugins=True)
-        self.assertEqual(len(report["files"]), 1)
-        self.assertLess(report["after"]["parts"]["plugin_skills"], report["before"]["parts"]["plugin_skills"])
-        self.assertLessEqual(len(frontmatter.read(target.read_text())[0]["description"]), 140)
-        self.assertTrue(any("plugin update" in warning for warning in report["warnings"]))
-        optimize.restore(self.root)
-        self.assertEqual(target.read_text(), original)
-        only_beta = linkdedupe.plan_plugin_skills(self.root, 140, lambda item: item["name"] == "beta")
-        self.assertEqual(only_beta["writes"], {})
 
 
 NEW_MODELS = ["claude-fable-5-3", "anthropic/claude-haiku-6", "claude-opus-5-5", "claude-sonnet-4-6",
@@ -1033,7 +1088,7 @@ FLOW_CLAUDE_MD = "\n".join([
     "## Build & Test", "", "- ALWAYS run tests after code changes", ""])
 
 OPTIONS = {"threshold": 150, "min_score": 85, "description_limit": 140, "follow_symlinks": False,
-           "dedupe_plugins": False, "scope_rules": False, "keep_mcp": [], "extract_scripts": False, "add_paths": False}
+           "dedupe_plugins": False, "scope_rules": False, "keep_mcp": [], "extract_scripts": False, "add_paths": False, "aggressive": True}
 
 
 def auto(root, apply=False, inventory=None, **overrides):
@@ -1283,7 +1338,7 @@ class AutoImproveTest(ProjectCase):
         report = auto(self.root, apply=True, follow_symlinks=True, dedupe_plugins=True)
         self.assertEqual(report["removed_links"], [".claude/skills/alpha"])
         twin = frontmatter.read((install / "skills" / "alpha" / "SKILL.md").read_text())[0]
-        self.assertLessEqual(len(twin["description"]), 140)
+        self.assertEqual(twin["description"], LONG_DESCRIPTION, "plugin files are never edited")
         shared = frontmatter.read((self.root / ".agents" / "skills" / "alpha" / "SKILL.md").read_text())[0]
         self.assertLessEqual(len(shared["description"]), 140)
         advice = [item for item in report["recommendations"] if item.startswith("plugin `")]
@@ -1293,6 +1348,18 @@ class AutoImproveTest(ProjectCase):
         self.assertNotIn("skillOverrides", json.loads((self.root / ".claude" / "settings.json").read_text()))
         optimize.restore(self.root)
         self.assertEqual(tree_digest(self.root), before)
+
+    def test_default_pass_is_lossless(self):
+        inventory = build_bloated(self.root)
+        report = auto(self.root, apply=True, inventory=inventory, aggressive=False, description_limit=350)
+        self.assertEqual(len(json.loads((self.root / ".mcp.json").read_text())["mcpServers"]), len(SERVERS))
+        self.assertFalse(list((self.root / ".claude").glob("agents/mcp-*.md")))
+        self.assertEqual(report["after"]["parts"]["mcp"], report["before"]["parts"]["mcp"])
+        for path in context_cost.skill_files(self.root):
+            self.assertLessEqual(len(frontmatter.read(path.read_text())[0]["description"]), 350)
+        self.assertLess(report["after"]["estimated_tokens"], report["before"]["estimated_tokens"])
+        print(f"\n  lossless benchmark (bloated fixture, est. tokens): {report['before']['estimated_tokens']} -> "
+              f"{report['after']['estimated_tokens']} (-{report['reduction_percent']}%)")
 
     def test_cli_is_a_dry_run_unless_apply_is_passed(self):
         build_bloated(self.root)

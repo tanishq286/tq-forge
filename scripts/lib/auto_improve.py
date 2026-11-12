@@ -1,6 +1,8 @@
 """Self-improving pass over a Claude Code setup (Python stdlib only).
 
-`auto-improve` runs everything `optimize` does, then uses two more signals:
+`auto-improve` runs everything `optimize` does (lossless by default: MCP
+servers stay put with deferred tools, descriptions of 350 characters or fewer
+are kept, plugin files are never edited), then uses two more signals:
 
   usage   session logs under .claude/projects/ show which skills were ever
           invoked (see telemetry.py)
@@ -8,7 +10,10 @@
 
 and plans these changes on top:
 
-  claude_md  a CLAUDE.md over 300 tokens keeps its rule sections; every other
+  claude_md  the prose of a long CLAUDE.md moves to an on-demand skill and its
+             rules, tables and triggers stay (see offload.py). With
+             --aggressive: a CLAUDE.md over 300 tokens keeps only its rule
+             sections and every other
              section moves into an on-demand skill (`reference.md` plus a
              140-character trigger), and a one-line pointer stays behind. A
              kept rule bullet over 160 characters keeps its first sentence;
@@ -16,10 +21,11 @@ and plans these changes on top:
   rules      with --scope-rules: a rule file over the threshold with no
              `paths:` gets any-file globs, so it loads the first time Claude
              touches a file instead of on every turn
-  skills     descriptions are cut to 140 characters; a skill that still costs
-             more than the threshold and was never invoked is listed by name only
+  skills     descriptions over 350 characters are cut (140 with --aggressive);
+             a skill that still costs more than the threshold and was never
+             invoked is listed by name only
   plugins    with --dedupe-plugins: a symlinked skill that a plugin also loads
-             is unlinked, and idle plugin skills over the threshold are compacted
+             is unlinked. Plugin files themselves are never edited
 
 Usage is evidence only when there are session logs to read. With none, every
 usage-based step is skipped and the report says so.
@@ -62,7 +68,7 @@ import telemetry  # noqa: E402
 
 THRESHOLD_TOKENS = 150
 MIN_SCORE = 85
-DESCRIPTION_LIMIT = 140
+DESCRIPTION_LIMIT = 140  # with --aggressive; the default is optimize.LOSSLESS_DESCRIPTION_LIMIT
 CLAUDE_MD_TOKEN_LIMIT = 300
 CLAUDE_MD_LINE_LIMIT = 35
 KEEP_SECTION_TOKENS = 300
@@ -255,16 +261,6 @@ def plan_idle_skills(root, usage, threshold, base):
     return plan
 
 
-def idle_plugin_selector(usage, threshold, twins=()):
-    """Pick plugin skills to compact: idle ones over the threshold, and the twins of unlinked skills."""
-    def select(item):
-        listing = f"{item['plugin']}:{item['name']}: {context_cost._described(item['path'])}"
-        idle = (usage["sessions"] > 0 and _tokens(listing) > threshold
-                and telemetry.uses(usage, item["name"], item["plugin"]) == 0)
-        return idle or item["name"] in twins
-    return select
-
-
 # -------------------------------------------------------------- upgrader
 
 def _score_text(kind, text, filename):
@@ -406,21 +402,19 @@ def build_plan(root, options):
     """Return (plan, extras) for one auto-improve pass over `root`."""
     usage = telemetry.scan(root)
     threshold = options["threshold"]
-    mcp = optimize.plan_mcp(root, options["keep_mcp"])
+    aggressive = options["aggressive"]
+    mcp = optimize.plan_mcp(root, options["keep_mcp"]) if aggressive else optimize.plan_tool_search(root)
     workers = sorted(pathlib.PurePosixPath(key).stem for key in mcp["writes"] if key.startswith(".claude/agents/"))
     rules = optimize.plan_rules(root)
-    offload = plan_claude_md(root, rules["writes"].get("CLAUDE.md"), workers)
+    remaining = rules["writes"].get("CLAUDE.md")
+    offload = plan_claude_md(root, remaining, workers) if aggressive else optimize._plan_prose(root, remaining)
     skills = optimize.plan_skills(root, [], False, options["description_limit"], options["follow_symlinks"])
     base = optimize.merge_plans(mcp, rules, offload, skills)
     if offload["writes"]:  # the offload dealt with the long CLAUDE.md that plan_rules could not split
-        base["warnings"] = [warning for warning in base["warnings"] if not warning.startswith("rules: CLAUDE.md")]
+        base["warnings"] = [warning for warning in base["warnings"]
+                            if not warning.startswith(("rules: CLAUDE.md", "prose: CLAUDE.md"))]
     if options["dedupe_plugins"]:
-        dedupe = linkdedupe.plan_dedupe(root)
-        twins = {pathlib.PurePosixPath(link).name for link in dedupe["remove_links"]}
-        base = optimize.merge_plans(
-            base, dedupe,
-            linkdedupe.plan_plugin_skills(root, options["description_limit"],
-                                          idle_plugin_selector(usage, threshold, twins)))
+        base = optimize.merge_plans(base, linkdedupe.plan_dedupe(root))
     if not usage["sessions"]:
         base["notes"].append("usage: no session logs found for this root; usage-based steps were skipped")
     if options["scope_rules"]:
@@ -469,14 +463,17 @@ def run(args):
     if not root.is_dir():
         raise scaffold.ScaffoldError(f"not a directory: {root}")
     inventory = context_cost.load_json(pathlib.Path(args.mcp_inventory)) if args.mcp_inventory else None
-    options = {"threshold": args.threshold, "min_score": args.min_score,
-               "description_limit": args.description_limit, "follow_symlinks": args.follow_symlinks,
+    limit = args.description_limit or (DESCRIPTION_LIMIT if args.aggressive else optimize.LOSSLESS_DESCRIPTION_LIMIT)
+    options = {"threshold": args.threshold, "min_score": args.min_score, "aggressive": args.aggressive,
+               "description_limit": limit, "follow_symlinks": args.follow_symlinks,
                "dedupe_plugins": args.dedupe_plugins, "scope_rules": args.scope_rules,
                "keep_mcp": optimize._names(args.keep_mcp), "extract_scripts": args.extract_scripts,
                "add_paths": args.add_paths}
     plan, extras = build_plan(root, options)
     report = optimize.build_report(root, plan, inventory, args.apply and not args.dry_run,
                                    args.dedupe_plugins, args.listing_budget)
+    if report["mode"] == "applied":
+        optimize.record_saving(root, report)
     return {**report, **extras}
 
 
@@ -489,14 +486,18 @@ def build_parser():
     parser.add_argument("--follow-symlinks", action="store_true",
                         help="also compact skills behind symlinks and in .agents/skills/")
     parser.add_argument("--dedupe-plugins", action="store_true",
-                        help="scan .claude/plugins/: unlink skills a plugin also loads, compact idle plugin skills")
+                        help="scan .claude/plugins/ and unlink symlinked skills that a plugin also loads")
     parser.add_argument("--threshold", type=int, default=THRESHOLD_TOKENS, metavar="TOKENS",
                         help=f"per-turn cost above which an unused item is treated as bloat (default {THRESHOLD_TOKENS})")
     parser.add_argument("--min-score", type=int, default=MIN_SCORE, metavar="SCORE",
                         help=f"rubric score below which a skill or subagent is upgraded (default {MIN_SCORE})")
-    parser.add_argument("--description-limit", type=int, default=DESCRIPTION_LIMIT, metavar="CHARS",
-                        help=f"longest skill description to keep (default {DESCRIPTION_LIMIT})")
-    parser.add_argument("--keep-mcp", help="MCP servers to leave in .mcp.json")
+    parser.add_argument("--description-limit", type=int, metavar="CHARS",
+                        help=f"longest skill description to keep (default {optimize.LOSSLESS_DESCRIPTION_LIMIT}, "
+                             f"or {DESCRIPTION_LIMIT} with --aggressive)")
+    parser.add_argument("--aggressive", action="store_true",
+                        help="trade capability for context: isolate MCP servers into workers, cut descriptions "
+                             "to 140 characters, keep only rule sections in CLAUDE.md")
+    parser.add_argument("--keep-mcp", help="with --aggressive: MCP servers to leave in .mcp.json")
     parser.add_argument("--scope-rules", action="store_true",
                         help="give always-loaded rule files over the threshold `paths:` so they load on the "
                              "first file touched, not on every turn")

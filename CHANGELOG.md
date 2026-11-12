@@ -4,6 +4,40 @@ All notable changes to `tq-forge` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] — 2026-11-12
+
+Lossless by default, eight signal-driven mods, and `learn` / `scout`.
+
+### Changed
+- **`optimize` and `auto-improve` no longer trade capability for context unless asked.**
+  - MCP servers stay in `.mcp.json`. The MCP step removes per-server `"alwaysLoad": true` and sets `ENABLE_TOOL_SEARCH=true` in `settings.json` `env` (an existing value is left alone), so tool schemas are deferred and every tool stays callable from the main thread and from subagents. Moving servers into worker subagents is now `--isolate-mcp`.
+  - Skill descriptions of 350 characters or fewer are never cut (`--description-limit 160` is the old behaviour). Reference sections move to `reference.md` for skill bodies over 120 lines.
+  - Files under `.claude/plugins/` are never written. `--compact-plugins` is removed.
+  - New `prose` step (`scripts/lib/offload.py`): a `CLAUDE.md` over 80 lines keeps its rules, tables, short lists, short commands and tool-naming trigger paragraphs; only prose and long examples move to an on-demand skill, and each section that loses anything is copied there whole. `auto-improve --aggressive` keeps the 1.1.0 behaviour.
+- **`shield` changes neither effort, nor the subagent model, nor permissions.** `effortLevel: medium` and `CLAUDE_CODE_SUBAGENT_MODEL` are no longer set (`--effort` and `--subagent-model` are opt-in), and build folders (`dist/`, `build/`, `.next/`, `coverage/`) are no longer in `permissions.deny`; they stay in `claudeMdExcludes`.
+- **Scorer rubric recalibrated** (`scripts/lib/score.py`): each dimension accepts the headings real skills use (Workflow, Red flags, Checklist, numbered or `Step N` headings, worked examples) and credits a trigger written in the description, so a clear, concise skill reaches 85 without a Tags section or a duplicated "When to use".
+- Settings and `.mcp.json` are written with non-ASCII text intact instead of `\u` escapes.
+
+### Added
+- **Mods** (`tq-forge mods install|status|toggle|savings`, `scripts/lib/mods.py`, `config/mods.json`): hook handlers that decide from what is happening instead of a static global setting. `mods install` is a dry run unless `--apply`, keeps existing hooks and settings, and is undone by `restore`.
+  - `input-router`: a data file over 2,000 tokens (source over 12,000) is handed to the `input-reader` subagent or read in ranges; MCP output is cleaned of empty fields, base64 and avatar URLs, and what is still over the threshold is saved to a file and replaced by a preview. Reads inside a subagent are never routed.
+  - `effort-optimizer`: classifies each prompt and recommends `/effort low|medium|high|xhigh` when the current effort does not fit. A hook cannot change effort, so it recommends; it never suggests `max`.
+  - `subagent-model-selector`: easy jobs go to `haiku`, normal to `sonnet`, complex stay on the session model. An explicit model, a plugin agent, a pinned agent definition and the built-in agents are left alone.
+  - `cache-clock`: records each reply; the status line and `tq-forge keep-warm [--ttl 55m|4m] [--wait]` show when the prompt cache goes cold (60 minutes on a subscription, 5 with an API key). `--chain-statusline` appends it to a status line you already have.
+  - `handoff`: past 250,000 tokens it writes a `HANDOFF.md` skeleton from the transcript (requests, files read and changed, skills, URLs) and points to `/handoff`.
+  - `efficient-browser-use`: halves screenshot dimensions (Pillow when present, a stdlib PNG path otherwise).
+  - Skills `/savings`, `/switchboard`, `/handoff`, `/keep-warm`; savings are logged to `~/.claude/tq-forge-savings.json`.
+- **`tq-forge learn <url-or-query>` and `tq-forge scout <topic> [--sources youtube,github,social,web]`** (`scripts/lib/intel_scout.py`, `scripts/lib/self_evolve.py`, `omni-scout` agent, `/tq-forge-learn`): collects a video's captions and chapters, a repository's Claude setup, Reddit / Hacker News / DEV.to posts or one page; removes lines that look like prompt injection or unsafe shell; writes a skill whose body is a fixed template and whose source text sits fenced in `reference.md`. Sandbox only unless `--apply`, and then only when it scores 85 or more with at least three concrete steps. `mods install --allow-autonomy` pre-approves the learn/scout commands, `WebSearch`, `WebFetch` and `gh api`; it is never added without the flag.
+
+### Fixed
+- **`restore` no longer deletes a file an apply created if you edited it since.** The manifest records a SHA-256 of what was written; a changed file is kept and listed (`--discard-edits` deletes it).
+- **`restore` compares real paths** (`os.path.realpath`), so a path that only looks like it is inside `--root` is never written or deleted.
+- `CODE_OF_CONDUCT.md` points to GitHub Private Vulnerability Reporting instead of a personal email address.
+
+### Notes
+- On the maintainer's `~` the lossless pass with `--dedupe-plugins` measures 45,524 → 42,710 estimated tokens with plugin skills counted (11,951 → 9,137 without). The 1.1.0 figure of −85% came from isolating the MCP server and scoping rules, which is what `--isolate-mcp` and `--aggressive` still do.
+- Token and dollar figures in `/savings` are estimates: characters ÷ 4, pixels ÷ 750, list prices.
+
 ## [1.1.0] — 2026-11-11
 
 Major release introducing the context optimizer, auto-improve, model sync, Claude Fable 5.2 orchestrators, lifecycle hooks, MCP scaffolding, isolated subagents, and an automated benchmark test suite.

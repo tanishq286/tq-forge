@@ -14,13 +14,20 @@ without deleting anything:
           and subagent model, two "soaker" subagents, and a one-line
           context-hygiene note in CLAUDE.md
 
+Lossless by default: MCP servers stay in .mcp.json with their tool schemas
+deferred (ENABLE_TOOL_SEARCH=true), descriptions of 350 characters or fewer are
+never cut, files under .claude/plugins/ are never edited, and `shield` changes
+neither effort, nor the subagent model, nor permissions.
+
 Opt-in extras for `optimize`:
+
+  --isolate-mcp       move each MCP server into its own worker subagent
 
   --follow-symlinks   also compact skills reached through a symlink (and the
                       shared .agents/skills/ folder); the real file is backed up
                       under .tq-forge-backup/symlink-targets/ first
   --dedupe-plugins    drop a symlinked skill that an enabled plugin already loads
-  --compact-plugins   compact the descriptions of plugin skills under .claude/plugins/
+  --description-limit 160   the aggressive description limit
 
 Dry run by default. --apply writes, after copying every file it changes to
 .tq-forge-backup/. `restore` undoes an apply (see backup.py).
@@ -51,8 +58,10 @@ import models  # noqa: E402
 import scaffold  # noqa: E402
 from backup import BACKUP_DIR, LINK_BACKUPS, MANIFEST, apply_writes, restore  # noqa: E402,F401 (re-exported)
 
-DESCRIPTION_LIMIT = 160
-SKILL_BODY_LIMIT = 150
+DESCRIPTION_LIMIT = 160  # the aggressive limit; pass it with --description-limit
+LOSSLESS_DESCRIPTION_LIMIT = 350  # the default: a description this short keeps every trigger keyword
+SKILL_BODY_LIMIT = 120
+TOOL_SEARCH_ENV = "ENABLE_TOOL_SEARCH"
 CLAUDE_MD_LIMIT = 80
 SCRIPT_MIN_LINES = 8
 MIN_LEAD_CHARS = 20
@@ -67,7 +76,7 @@ EXISTING_WINS = ("env", "skillOverrides")  # settings maps where a value the use
 SETTINGS = ".claude/settings.json"
 HYGIENE_RULE = ".claude/rules/tq-forge-context-hygiene.md"
 SOAKERS = ("context-soaker", "test-soaker")
-STEPS = ("mcp", "skills", "rules")
+STEPS = ("mcp", "skills", "rules", "prose")
 REFERENCE_TITLE = re.compile(
     r"reference|api|schema|example|appendix|background|faq|troubleshoot|changelog|history", re.I)
 CORE_TITLE = re.compile(
@@ -79,7 +88,6 @@ GLOB_CHARS = re.compile(r"^[\w.*/{},@-]+$")
 SAFE_KEY = re.compile(r"[\w.-]+")
 CLAUDE_MD_EXCLUDES = ("**/node_modules/**", "**/dist/**", "**/build/**",
                       "**/coverage/**", "**/.next/**", "**/vendor/**")
-DENY_READS = ("Read(./dist/**)", "Read(./build/**)", "Read(./.next/**)", "Read(./coverage/**)")
 ENV_DENY_READS = ("Read(./.env)", "Read(./.env.*)")
 STRICT_DENY_READS = ("Read(./node_modules/**)", "Read(./package-lock.json)",
                      "Read(./pnpm-lock.yaml)", "Read(./yarn.lock)")
@@ -139,6 +147,41 @@ def join_markdown(parts):
 
 
 # ------------------------------------------------------------------- mcp
+
+def plan_tool_search(root):
+    """Keep every MCP server where it is and make sure its tool schemas stay deferred.
+
+    This is the default, lossless MCP step. Claude Code's tool search already
+    defers schemas; this pins it on and removes per-server `alwaysLoad` flags
+    that would load a whole server upfront. Tool names and server instructions
+    still load, and every tool stays callable from the main thread and from
+    subagents. Use `plan_mcp` (--isolate-mcp) to move servers out instead.
+    """
+    plan = new_plan()
+    config = context_cost.load_json(root / ".mcp.json")
+    servers = config.get("mcpServers") if isinstance(config.get("mcpServers"), dict) else {}
+    if not servers:
+        plan["notes"].append("mcp: no servers in .mcp.json")
+        return plan
+    upfront = [name for name, entry in servers.items() if isinstance(entry, dict) and entry.get("alwaysLoad") is True]
+    reason = skip_reason(root, ".mcp.json")
+    if upfront and reason:
+        plan["warnings"].append(f"mcp: .mcp.json {reason}; alwaysLoad left on {', '.join(upfront)}")
+    elif upfront:
+        cleaned = {name: ({key: value for key, value in entry.items() if key != "alwaysLoad"}
+                          if name in upfront else entry) for name, entry in servers.items()}
+        plan["writes"][".mcp.json"] = json.dumps({**config, "mcpServers": cleaned}, indent=2, ensure_ascii=False) + "\n"
+        plan["notes"].append(f"mcp: removed alwaysLoad from {', '.join(upfront)}")
+    env = context_cost.load_json(root / SETTINGS).get("env")
+    current = env.get(TOOL_SEARCH_ENV) if isinstance(env, dict) else None
+    if current is None:
+        plan["settings"]["env"] = {TOOL_SEARCH_ENV: "true"}
+    elif str(current).lower() != "true":
+        plan["warnings"].append(f"mcp: {TOOL_SEARCH_ENV} is {json.dumps(current)} in settings.json; left as you set it")
+    plan["notes"].append(f"mcp: {len(servers)} server(s) kept in .mcp.json with tool schemas deferred "
+                         f"({TOOL_SEARCH_ENV}=true); tool names and server instructions still load")
+    return plan
+
 
 def worker_name(server):
     return "mcp-" + (re.sub(r"[^a-z0-9]+", "-", server.lower()).strip("-") or "server")
@@ -209,7 +252,7 @@ def plan_mcp(root, keep):
         plan["notes"].append("mcp: no servers to move")
         return plan
     remaining = {name: entry for name, entry in servers.items() if name not in moved}
-    plan["writes"][".mcp.json"] = json.dumps({**config, "mcpServers": remaining}, indent=2) + "\n"
+    plan["writes"][".mcp.json"] = json.dumps({**config, "mcpServers": remaining}, indent=2, ensure_ascii=False) + "\n"
     plan["notes"].extend(f"mcp: `{server}` -> {target}" for server, target in moved.items())
     return plan
 
@@ -460,8 +503,9 @@ def _effort_models(settings):
 def plan_shield(root, strict, subagent_model, deny_env=False, effort=None):
     plan = new_plan()
     plan["settings"]["claudeMdExcludes"] = list(CLAUDE_MD_EXCLUDES)
-    plan["settings"]["permissions.deny"] = [*DENY_READS, *(ENV_DENY_READS if deny_env else ()),
-                                            *(STRICT_DENY_READS if strict else ())]
+    denied = [*(ENV_DENY_READS if deny_env else ()), *(STRICT_DENY_READS if strict else ())]
+    if denied:  # build folders are never denied: Claude often has to read build output to debug it
+        plan["settings"]["permissions.deny"] = denied
     if effort:
         if effort not in SETTINGS_EFFORTS:
             raise scaffold.ScaffoldError(f"unknown effort '{effort}'; use {', '.join(SETTINGS_EFFORTS)}")
@@ -487,7 +531,8 @@ def plan_shield(root, strict, subagent_model, deny_env=False, effort=None):
             plan["notes"].append(f"shield: {target} already exists; kept")
             continue
         plan["writes"][target] = context_cost.read_text(scaffold.TEMPLATES / "agents" / f"{name}.md")
-    plan["notes"].append("shield: claudeMdExcludes, permissions.deny, soaker subagents, hygiene note in CLAUDE.md")
+    plan["notes"].append("shield: claudeMdExcludes, soaker subagents, hygiene note in CLAUDE.md; "
+                         "effort, subagent model and permissions are left as they are unless a flag asks")
     return plan
 
 
@@ -513,7 +558,7 @@ def settings_content(root, patch):
             result[key] = [*current, *[v for v in value if v not in current]]
         else:
             result[key] = value
-    return json.dumps(result, indent=2) + "\n"
+    return json.dumps(result, indent=2, ensure_ascii=False) + "\n"
 
 
 # ------------------------------------------------------- apply and report
@@ -623,6 +668,10 @@ def build_report(root, plan, inventory, apply, plugins=False, listing_budget=Non
 def render(report):
     if report["mode"] == "restored":
         lines = [f"restored {len(report['files'])} file(s)", *report["files"]]
+        if report.get("kept_edited"):
+            lines.append(f"kept {len(report['kept_edited'])} file(s) an apply created and you edited since "
+                         f"(--discard-edits deletes them):")
+            lines.extend(f"  {path}" for path in report["kept_edited"])
         if report.get("skipped"):
             lines.append(f"left {len(report['skipped'])} file(s) outside the root as they are; their backups are kept. "
                          f"Run restore again with --outside to put them back:")
@@ -668,33 +717,52 @@ def run(args):
         raise scaffold.ScaffoldError(f"not a directory: {root}")
     inventory = context_cost.load_json(pathlib.Path(args.mcp_inventory)) if args.mcp_inventory else None
     if args.command == "restore":
-        return restore(root, args.outside)
+        return restore(root, args.outside, args.discard_edits)
     if args.command == "measure":
         return {"mode": "measure", **context_cost.measure(root, inventory, args.plugins, args.listing_budget)}
     apply = args.apply and not args.dry_run
     plugins = args.plugins
     if args.command == "shield":
-        plan = plan_shield(root, args.strict, _choice(args.subagent_model, models.subagent_model()),
-                           args.deny_env, _choice(args.effort, DEFAULT_EFFORT))
+        plan = plan_shield(root, args.strict, _choice(args.subagent_model, None),
+                           args.deny_env, _choice(args.effort, None))
     else:
         steps = _names(args.only) or list(STEPS)
         unknown = [step for step in steps if step not in STEPS]
         if unknown:
             raise scaffold.ScaffoldError(f"unknown step {', '.join(unknown)}; use {', '.join(STEPS)}")
-        builders = {"mcp": lambda: plan_mcp(root, _names(args.keep_mcp)),
+        isolate = lambda: plan_mcp(root, _names(args.keep_mcp))  # noqa: E731
+        builders = {"mcp": isolate if args.isolate_mcp else (lambda: plan_tool_search(root)),
+                    "prose": lambda: _plan_prose(root),
                     "skills": lambda: plan_skills(root, _names(args.mute_skills), args.extract_scripts,
                                                   args.description_limit, args.follow_symlinks),
                     "rules": lambda: plan_rules(root)}
         plans = [builders[step]() for step in steps]
-        if args.dedupe_plugins or args.compact_plugins:
+        if "rules" in steps and "prose" in steps:  # the prose step works on what the rules step left
+            rules = plans[steps.index("rules")]
+            plans[steps.index("prose")] = _plan_prose(root, rules["writes"].get("CLAUDE.md"))
+        if args.dedupe_plugins:
             import linkdedupe  # imports this module, so it is loaded only when asked for
             plugins = True
-            if args.dedupe_plugins:
-                plans.append(linkdedupe.plan_dedupe(root))
-            if args.compact_plugins:
-                plans.append(linkdedupe.plan_plugin_skills(root, args.description_limit))
+            plans.append(linkdedupe.plan_dedupe(root))
         plan = merge_plans(*plans)
-    return build_report(root, plan, inventory, apply, plugins, args.listing_budget)
+    report = build_report(root, plan, inventory, apply, plugins, args.listing_budget)
+    if apply and args.command == "optimize":
+        record_saving(root, report)
+    return report
+
+
+def record_saving(root, report):
+    """Add an applied reduction to the /savings dashboard, for the user setup or a project with the mods installed."""
+    import mods  # the mod runtime; loaded only after an apply
+    saved = report["before"]["estimated_tokens"] - report["after"]["estimated_tokens"]
+    tracked = root.resolve() == mods.USER_HOME.resolve() or (root / ".claude/hooks/tq-forge/mods.py").is_file()
+    if saved > 0 and tracked:
+        mods.record_context_saving(saved)
+
+
+def _plan_prose(root, text=None):
+    import offload  # imports this module, so it is loaded only when the step runs
+    return offload.plan_prose(root, text)
 
 
 def build_parser():
@@ -713,31 +781,35 @@ def build_parser():
         sub.add_argument("--dry-run", action="store_true",
                          help="print the plan and write nothing (the default; wins over --apply)")
         if name == "optimize":
-            sub.add_argument("--keep-mcp", help="servers to leave in .mcp.json")
+            sub.add_argument("--isolate-mcp", action="store_true",
+                             help="move each MCP server into its own worker subagent (the main thread loses "
+                                  "direct access to its tools); default is to keep servers and defer their tools")
+            sub.add_argument("--keep-mcp", help="with --isolate-mcp: servers to leave in .mcp.json")
             sub.add_argument("--mute-skills", help="skill names to set to off in skillOverrides")
             sub.add_argument("--extract-scripts", action="store_true",
                              help="move long shell blocks into scripts/ (review the result)")
             sub.add_argument("--only", help="comma-separated subset of: " + ", ".join(STEPS))
-            sub.add_argument("--description-limit", type=int, default=DESCRIPTION_LIMIT, metavar="CHARS",
-                             help=f"longest skill description to keep (default {DESCRIPTION_LIMIT})")
+            sub.add_argument("--description-limit", type=int, default=LOSSLESS_DESCRIPTION_LIMIT, metavar="CHARS",
+                             help=f"longest skill description to keep (default {LOSSLESS_DESCRIPTION_LIMIT}; "
+                                  f"{DESCRIPTION_LIMIT} is the aggressive setting)")
             sub.add_argument("--follow-symlinks", action="store_true",
                              help="also compact skills behind symlinks and in .agents/skills/")
             sub.add_argument("--dedupe-plugins", action="store_true",
                              help="remove a symlinked skill that an enabled plugin already loads")
-            sub.add_argument("--compact-plugins", action="store_true",
-                             help="compact plugin skill descriptions under .claude/plugins/ (a plugin update undoes it)")
         if name == "restore":
             sub.add_argument("--outside", action="store_true",
                              help="also restore files outside the root (the targets of followed symlinks)")
+            sub.add_argument("--discard-edits", action="store_true",
+                             help="also delete files an apply created that you have edited since")
         if name == "shield":
             sub.add_argument("--strict", action="store_true",
                              help="also deny reading node_modules and lockfiles")
             sub.add_argument("--deny-env", action="store_true", help="also deny reading .env files")
             sub.add_argument("--effort", metavar="LEVEL",
-                             help=f"effortLevel to set (default {DEFAULT_EFFORT}; `{KEEP}` leaves it alone)")
+                             help="set a static effortLevel (opt-in; the effort-optimizer mod is the dynamic way)")
             sub.add_argument("--subagent-model", metavar="MODEL",
-                             help=f"CLAUDE_CODE_SUBAGENT_MODEL to set (default: the registry's worker model; "
-                                  f"`{KEEP}` leaves it alone)")
+                             help="set a static CLAUDE_CODE_SUBAGENT_MODEL (opt-in; the subagent-model-selector "
+                                  "mod is the dynamic way)")
     return parser
 
 

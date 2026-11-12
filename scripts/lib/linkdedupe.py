@@ -1,13 +1,12 @@
 """Plugin-aware planning for the context optimizer (Python stdlib only).
 
-Two plans, both opt-in:
+One opt-in plan:
 
-  plan_dedupe         a skill that sits in .claude/skills/ as a symlink and is
-                      also shipped by an enabled plugin loads twice. The link
-                      goes; the plugin copy and the link's target stay.
-  plan_plugin_skills  compact the descriptions of plugin skills in place. A
-                      plugin update replaces the edited files, so this lasts
-                      until the next update.
+  plan_dedupe  a skill that sits in .claude/skills/ as a symlink and is also
+               shipped by an enabled plugin loads twice. The link goes; the
+               plugin copy and the link's target stay.
+
+Files under .claude/plugins/ are read to find duplicates and never written.
 
 `skillOverrides` cannot be used for plugin skills: Claude Code applies it to
 personal and project skills only. It is used here for one case, a personal
@@ -49,25 +48,4 @@ def plan_dedupe(root):
         plan["settings"]["skillOverrides"] = muted
     if not plan["remove_links"] and not muted:
         plan["notes"].append("dedupe: no skill is loaded twice")
-    return plan
-
-
-def plan_plugin_skills(root, limit=optimize.DESCRIPTION_LIMIT, select=None):
-    """Compact plugin skill descriptions. `select(item)` narrows which skills are touched."""
-    plans, outside = [], 0
-    for item in context_cost.plugin_skills(root):
-        if select and not select(item):
-            continue
-        path = item["path"]
-        if root.resolve() not in path.resolve().parents:
-            outside += 1
-            continue
-        inside = root / path.resolve().relative_to(root.resolve())
-        plans.append(optimize._plan_one_skill(root, inside, False, limit, split=False))
-    plan = optimize.merge_plans(*plans)
-    plan["notes"] = [note.replace("skills:", "plugins:", 1) for note in plan["notes"]]
-    if outside:
-        plan["warnings"].append(f"plugins: {outside} plugin skill(s) live outside {root}; left unchanged")
-    if plan["writes"]:
-        plan["warnings"].append("plugins: a plugin update replaces these files; run the optimizer again after one")
     return plan

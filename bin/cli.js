@@ -227,11 +227,22 @@ ${c.bold('Forge and score')} ${c.dim('(each takes --help)')}
 
 ${c.bold('Context optimizer')} ${c.dim('(dry run unless --apply; restore undoes it)')}
   measure       Estimate the always-loaded context of the current project
-  optimize      Isolate MCP servers, compact skills, split CLAUDE.md into rules
+  optimize      Lossless: keep MCP servers with deferred tools, move long skill bodies and
+                CLAUDE.md prose to on-demand files ${c.dim('(--isolate-mcp, --description-limit 160 trade capability)')}
   optimize-mcp / optimize-skills   Run one part of optimize
   auto-improve  optimize, plus usage- and score-driven fixes ${c.dim('(--root ~ for your user setup)')}
-  shield        Lean settings, soaker subagents and a one-line hygiene note
-  restore       Put back the files an --apply run changed ${c.dim('(--outside for followed symlink targets)')}
+  shield        claudeMdExcludes, soaker subagents and a one-line hygiene note
+  restore       Put back the files an --apply run changed ${c.dim('(--outside, --discard-edits)')}
+
+${c.bold('Mods')} ${c.dim('(signal-driven hooks; install is a dry run unless --apply)')}
+  mods install  Install the hooks, /savings, /switchboard, /handoff, /keep-warm ${c.dim('(--root ~)')}
+  mods status | savings            What is on, and what each mod has saved
+  mods toggle <mod> <on|off|haiku|sonnet>
+  keep-warm     When the prompt cache goes cold ${c.dim('(--ttl 55m|4m, --wait)')}
+
+${c.bold('Learn')} ${c.dim('(sandbox only unless --apply)')}
+  learn <url-or-query>   Turn a video, repository or page into a skill
+  scout <topic>          Research a topic ${c.dim('(--sources youtube,github,social,web)')}
 
 ${c.bold('Models')} ${c.dim('(dry run unless --apply)')}
   sync-models   Detect new Claude models; update the registry and pinned model ids
@@ -261,6 +272,10 @@ const PASS_THROUGH = {
   restore: ['optimize.sh', ['restore']],
   'auto-improve': ['auto-improve.sh', []],
   'sync-models': ['sync-models.sh', []],
+  mods: ['mods.sh', []],
+  'keep-warm': ['mods.sh', ['keep-warm']],
+  learn: ['learn.sh', ['learn']],
+  scout: ['learn.sh', ['scout']],
 };
 
 function runScript(script, scriptArgs) {

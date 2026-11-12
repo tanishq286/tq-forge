@@ -6,8 +6,12 @@ in <root>/.tq-forge-backup/:
   <path>                    the original of each file that was changed
   symlink-targets/<path>    the original of a file reached through a symlink
   manifest.json             {"created": [...],          files to delete on restore
+                             "created_hashes": {...},   file -> SHA-256 of what was written
                              "symlink_targets": {...},  file -> its backup
                              "removed_links": {...}}    symlink -> where it pointed
+
+A created file is deleted on restore only while it still holds exactly what the
+apply wrote. If you edited it since, restore keeps it and says so.
 
 The first backup of a file wins, so `restore` always goes back to the state
 before the first apply, however many applies followed.
@@ -20,6 +24,7 @@ works with a backup folder that is, or contains, a symlink, and `restore`
 never copies onto a symlink.
 """
 
+import hashlib
 import json
 import os
 import pathlib
@@ -38,9 +43,23 @@ def is_absolute(key):
 
 
 def _within(folder, path):
-    """True when `path` is `folder` or sits under it, after resolving symlinks."""
-    resolved = path.resolve()
-    return resolved == folder or folder in resolved.parents
+    """True when the real location of `path` is `folder` or sits under it."""
+    real_folder, real_path = os.path.realpath(folder), os.path.realpath(path)
+    try:
+        return os.path.commonpath([real_folder, real_path]) == real_folder
+    except ValueError:  # different drives
+        return False
+
+
+def digest(text):
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _file_digest(path):
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
 
 
 def _refuse_links(backup_root):
@@ -65,14 +84,18 @@ def apply_writes(root, writes, backup=True, aliases=None, remove_links=None):
     created = list(manifest.get("created", []))
     link_targets = dict(manifest.get("symlink_targets") or {})
     removed = dict(manifest.get("removed_links") or {})
+    hashes = dict(manifest.get("created_hashes") or {})
     # Phase 1: back everything up and record it, so a failure part-way through
     # the writes below still leaves `restore` everything it needs.
     for key in sorted(writes):
         target = root / key
         if key in created:
+            if _file_digest(target) in (None, hashes.get(key)):
+                hashes[key] = digest(writes[key])  # still ours: track what this apply writes
             continue  # a file an earlier apply created has no original to keep
         if not target.exists():
             created.append(key)
+            hashes[key] = digest(writes[key])
         elif backup:
             saved = f"{LINK_BACKUPS}/{key.lstrip('/')}" if key in aliases else key
             if not (backup_root / saved).exists():
@@ -86,6 +109,8 @@ def apply_writes(root, writes, backup=True, aliases=None, remove_links=None):
     if backup and (writes or remove_links):
         backup_root.mkdir(parents=True, exist_ok=True)
         record = {"created": created}
+        if hashes:
+            record["created_hashes"] = hashes
         if link_targets:
             record["symlink_targets"] = link_targets
         if removed:
@@ -112,10 +137,15 @@ def _remove_empty_parents(root, folder):
         folder = folder.parent
 
 
-def _delete_created(root, manifest, outside, skipped):
+def _delete_created(root, manifest, outside, skipped, kept, discard_edits):
+    hashes = manifest.get("created_hashes") or {}
     for relative in manifest.get("created", []):
         target = (root / str(relative)).resolve()
         if not target.is_file():
+            continue
+        recorded = hashes.get(str(relative))
+        if recorded and not discard_edits and _file_digest(target) != recorded:
+            kept.append(str(relative))  # edited since the apply: never destroy the user's work
             continue
         if _within(root, target):
             target.unlink()
@@ -154,11 +184,13 @@ def _restore_links(root, manifest, outside, restored, skipped):
         restored.append(str(relative))
 
 
-def restore(root, outside=False):
+def restore(root, outside=False, discard_edits=False):
     """Undo every apply since the backup folder was created.
 
     Files outside the root are left alone, listed under "skipped", and their
-    backups are kept, unless `outside` is true.
+    backups are kept, unless `outside` is true. A file an apply created is kept
+    (listed under "kept_edited") when its content changed since, unless
+    `discard_edits` is true.
     """
     backup_root = root / BACKUP_DIR
     if not backup_root.is_dir():
@@ -166,8 +198,8 @@ def restore(root, outside=False):
     _refuse_links(backup_root)
     root = root.resolve()
     manifest = context_cost.load_json(backup_root / MANIFEST)
-    restored, skipped = [], []
-    _delete_created(root, manifest, outside, skipped)
+    restored, skipped, kept = [], [], []
+    _delete_created(root, manifest, outside, skipped, kept, discard_edits)
     for saved in sorted(path for path in backup_root.rglob("*") if path.is_file()):
         relative = saved.relative_to(backup_root).as_posix()
         if relative == MANIFEST or relative.startswith(f"{LINK_BACKUPS}/"):
@@ -183,4 +215,4 @@ def restore(root, outside=False):
     _restore_links(root, manifest, outside, restored, skipped)
     if not skipped:
         shutil.rmtree(backup_root)
-    return {"mode": "restored", "files": restored, "skipped": skipped}
+    return {"mode": "restored", "files": restored, "skipped": skipped, "kept_edited": kept}

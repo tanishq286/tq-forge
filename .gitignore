@@ -1,5 +1,6 @@
 # tq-forge state home (never commit user data)
 .tq-forge/
+.claude-flow/
 sandbox/
 
 # OS / editor cruft

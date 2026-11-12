@@ -32,8 +32,8 @@ This Code of Conduct applies within all community spaces, repositories, issue tr
 
 ## Reporting & Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be reported directly to the maintainer at:
-**tanishqagarwal2864@gmail.com**
+Instances of abusive, harassing, or otherwise unacceptable behavior may be reported privately to the maintainer through GitHub Private Vulnerability Reporting:
+**<https://github.com/tanishq286/tq-forge/security/advisories/new>**
 
 All reports will be reviewed promptly, treated confidentially, and handled fairly with appropriate corrective action.
 

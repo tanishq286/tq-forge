@@ -7,11 +7,15 @@
 #
 # Usage:
 #   optimize.sh measure  [--root DIR] [--mcp-inventory FILE] [--json]
-#   optimize.sh optimize [--root DIR] [--only mcp,skills,rules] [--keep-mcp a,b]
-#                        [--mute-skills a,b] [--extract-scripts]
+#   optimize.sh optimize [--root DIR] [--only mcp,skills,rules,prose] [--isolate-mcp [--keep-mcp a,b]]
+#                        [--description-limit CHARS] [--mute-skills a,b] [--extract-scripts]
+#                        [--follow-symlinks] [--dedupe-plugins]
 #                        [--mcp-inventory FILE] [--apply] [--json]
-#   optimize.sh shield   [--root DIR] [--strict] [--subagent-model <id|alias>] [--apply] [--json]
-#   optimize.sh restore  [--root DIR]
+#   optimize.sh shield   [--root DIR] [--strict] [--deny-env] [--effort LEVEL] [--subagent-model <id|alias>] [--apply] [--json]
+#   optimize.sh restore  [--root DIR] [--outside] [--discard-edits]
+#
+# Lossless by default: MCP servers stay in .mcp.json with their tools deferred, descriptions of
+# 350 characters or fewer are never cut, and files under .claude/plugins/ are never written.
 #
 # Token numbers are estimates (characters / 4). Check real usage with /context.
 

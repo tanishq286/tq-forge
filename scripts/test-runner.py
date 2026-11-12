@@ -403,7 +403,7 @@ def test_model_registry_and_lifecycle(suite: TestSuite):
 
         project, state = tmp / "project", tmp / "state"
         project.mkdir()
-        sections = "\n".join(f"## Topic {n}\n\n" + "\n".join(f"- Detail {n}.{m} of the topic." for m in range(40))
+        sections = "\n".join(f"## Topic {n}\n\n" + "\n".join(f"Detail {n}.{m} of the topic, written out as a full sentence of prose." for m in range(40))
                              for n in range(4))
         (project / "CLAUDE.md").write_text(f"# Project\n\n## Rules\n\n- Use tabs.\n\n{sections}\n", encoding="utf-8")
         hook = ROOT / "templates" / "hooks" / "auto-improve-session.sh"

@@ -35,45 +35,72 @@ TRIGGER = r"\buse\s+(?:this\s+agent\s+)?(?:when|proactively|after|before|for|imm
 SECTIONS_BY_COUNT = {3: 9, 2: 7, 1: 5, 0: 3}
 
 
+WHEN_TITLES = r"When to use|When to apply|When to invoke|Use this (?:skill )?when|Triggers?"
+STEP_TITLES = (r"Procedure|Process|Workflow|Steps|Usage|How to(?: use)?|How it works|Instructions|Quick ?start"
+               r"|Getting started|Core (?:process|workflow|loop)|The [\w -]*(?:loop|cycle|process|workflow)")
+GUARD_TITLES = (r"Pitfalls|Gotchas|Red flags|Common (?:mistakes|rationalizations|pitfalls|errors)|Anti-?patterns"
+                r"|Troubleshooting|Limitations|Boundaries|When not to use|Caveats|Warnings|Failure modes|Forbidden"
+                r"|(?:The )?Iron law|Rationalizations|Edge cases|Constraints|Mistakes|Don'?ts?\b")
+CHECK_TITLES = (r"Verification|Verify|Checklist|Validation|Done when|Success criteria|Exit criteria|Testing"
+                r"|Self-?review|Final review|Quality (?:gate|bar|checks?)|Acceptance|Definition of done")
+NUMBERED_HEADING = r"^#{2,4}\s*(?:(?:Step|Phase|Stage)\s+)?\d+[.:)]?\s+\S"  # "### 1. Contract first", "## Step 2: ..."
+EXTRA_TITLES = r"Tags|Related|References?|See also|Examples?|Resources"
+DESCRIPTION_TRIGGER = r"\buse (?:when|for|to|before|after|this)\b|\bwhen (?:the user|you|asked|a |an )"
+WORDS_PER_VAGUE_WORD = 300  # ordinary prose uses "some" now and then; one per this many words is not vagueness
+
+
+def _titled(body, titles):
+    """Text under the first heading (any level) whose title matches `titles`, or None."""
+    match = re.search(rf"^#{{1,4}}\s*(?:\d+[.)]\s*)?(?:{titles})\b[^\n]*\n(.*?)(?=^#{{1,2}}\s|\Z)",
+                      body, re.S | re.M | re.I)
+    return match.group(1) if match else None
+
+
 def score_skill(text):
+    """Score a skill on what it tells Claude, not on which exact headings it uses.
+
+    Each dimension accepts the headings real skills use (Workflow, Red flags,
+    Checklist, ...) and credits a trigger written in the frontmatter
+    description, so a clear, concise skill reaches 85+ without a Tags section
+    or a second copy of its description under "When to use".
+    """
+    fields, body, _ = frontmatter.read(text)
     dims = {}
 
-    match = re.search(r"##\s*When to use\s*\n(.+?)\n##", text, re.S | re.I)
-    if match:
-        body = match.group(1).strip()
-        sentences = [s for s in re.split(r"[.!?]\s", body) if s.strip()]
-        words = len(body.split())
-        if 30 <= words <= 200 and 1 <= len(sentences) <= 4:
-            dims["clarity"] = 9
-        elif words < 30:
-            dims["clarity"] = 5
-        else:
-            dims["clarity"] = 7
+    described = " ".join(str(fields.get("description", "")).split())
+    when = _titled(body, WHEN_TITLES)
+    when_words = len((when or "").split())
+    sentences = [s for s in re.split(r"[.!?]\s", (when or "").strip()) if s.strip()]
+    if when is not None and 30 <= when_words <= 200 and 1 <= len(sentences) <= 4:
+        dims["clarity"] = 9
+    elif len(described.split()) >= 8 and re.search(DESCRIPTION_TRIGGER, described, re.I):
+        dims["clarity"] = 9
+    elif when is not None:
+        dims["clarity"] = 5 if when_words < 30 else 7
     else:
-        dims["clarity"] = 3
+        dims["clarity"] = 5 if len(described.split()) >= 8 else 3
 
-    match = re.search(r"##\s*Procedure\s*\n(.+?)\n##", text, re.S | re.I)
-    if match:
-        body = match.group(1)
-        steps = re.findall(r"^\s*\d+\.\s", body, re.M)
-        if len(steps) >= 3 and body.count("```") >= 2:
-            dims["actionability"] = 9
-        elif len(steps) >= 2:
-            dims["actionability"] = 7
-        else:
-            dims["actionability"] = 5
+    steps_text = _titled(body, STEP_TITLES)
+    steps = re.findall(r"^\s*(?:\d+[.)]|[-*])\s|^#{3,4}\s", steps_text or "", re.M)
+    numbered_anywhere = re.findall(r"^\s*\d+[.)]\s", body, re.M)
+    numbered_headings = re.findall(NUMBERED_HEADING, body, re.M | re.I)
+    examples = body.count("```") // 2
+    if len(steps) >= 3 or len(numbered_headings) >= 3 or (len(numbered_anywhere) >= 3 and examples):
+        dims["actionability"] = 9  # ordered steps, wherever the skill keeps them
+    elif len(steps) >= 2 or len(numbered_anywhere) >= 3 or examples >= 3:
+        dims["actionability"] = 7  # some order, or enough worked examples to act on
     else:
-        dims["actionability"] = 3
+        dims["actionability"] = 5 if steps_text is not None else 3
 
-    present = sum(bool(re.search(rf"##\s*{name}", text, re.I))
-                  for name in ("Pitfalls", "Verification", "Tags"))
-    dims["completeness"] = SECTIONS_BY_COUNT[present]
+    present = sum(_titled(body, titles) is not None for titles in (GUARD_TITLES, CHECK_TITLES, EXTRA_TITLES))
+    dims["completeness"] = {0: 3, 1: 7}.get(present, 9)
 
-    vague = re.findall(VAGUE, text, re.I)
-    real_paths = re.findall(REAL_PATHS, text)
-    if not vague and len(real_paths) >= 3:
+    vague = re.findall(VAGUE, body, re.I)
+    allowed = 1 + len(body.split()) // WORDS_PER_VAGUE_WORD
+    concrete = len(re.findall(REAL_PATHS, body)) + len(re.findall(r"`[^`\n]+`", body)) + body.count("```") // 2
+    if len(vague) <= allowed and concrete >= 3:
         dims["specificity"] = 9
-    elif len(vague) <= 1 and len(real_paths) >= 1:
+    elif len(vague) <= 2 * allowed and concrete >= 1:
         dims["specificity"] = 7
     else:
         dims["specificity"] = 4

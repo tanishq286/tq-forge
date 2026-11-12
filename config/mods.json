@@ -1,0 +1,26 @@
+{
+  "_comment": "Defaults for the tq-forge mods. `tq-forge mods toggle` writes your choices to ~/.claude/tq-forge-mods.json, which wins over this file.",
+  "input-router": {
+    "enabled": true,
+    "threshold_tokens": 2000,
+    "source_threshold_tokens": 12000,
+    "reader": "haiku",
+    "preview_chars": 1200,
+    "drop_keys": ["avatar_url", "gravatar_id", "node_id", "_links", "etag", "tracking_id"]
+  },
+  "effort-optimizer": {"enabled": true},
+  "subagent-model-selector": {
+    "enabled": true,
+    "tiers": {"easy": "haiku", "normal": "sonnet", "complex": "inherit"},
+    "auto_allow": false
+  },
+  "cache-clock": {"enabled": true, "ttl_minutes": "auto"},
+  "handoff": {"enabled": true, "threshold_tokens": 250000, "repeat_every_tokens": 50000},
+  "efficient-browser-use": {
+    "enabled": true,
+    "scale": 0.5,
+    "tools": "screenshot|snapshot_image|capture",
+    "max_fallback_pixels": 2200000
+  },
+  "prices_per_million_input": {"haiku": 0.1, "sonnet": 2.0, "opus": 4.0, "fable": 8.0, "cache_read": 0.2}
+}
