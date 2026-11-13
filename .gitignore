@@ -23,3 +23,6 @@ __pycache__/
 # Temp
 *.tmp
 *.log
+
+# Local drafts (never commit)
+OSS_APPLICATION_DRAFT.md

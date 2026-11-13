@@ -327,7 +327,7 @@ Every bundled skill and subagent archetype is validated against our deterministi
 npx tq-forge install
 ```
 
-This installs all 13 skills into `~/.claude/skills/`, configures support engines in `~/.tq-forge/install/`, and verifies system dependencies.
+This installs all 18 skills into `~/.claude/skills/`, configures support engines in `~/.tq-forge/install/`, and verifies system dependencies.
 
 ```bash
 npx tq-forge doctor      # Verify installation and dependencies
