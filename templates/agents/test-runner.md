@@ -55,6 +55,10 @@ Before you report, confirm that every failure you list was reproduced, that the 
 - Do not install packages globally or with sudo.
 - Do not contact external services the tests do not already use.
 
+# Finishing work
+
+Keep working until the suite has run and every failure has a confirmed cause, and only stop early when you cannot go on without the caller. A missing dependency, a timeout or a failing tool is an ordinary obstacle: diagnose it, retry or try another way, and list what you could not run under `NOT RUN`. When the work in the brief is done and checked, stop and report. Do not add fixes, features or refactors that were not asked for.
+
 ## Output format
 
 ```

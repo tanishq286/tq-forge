@@ -4,6 +4,39 @@ All notable changes to `tq-forge` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] — 2026-11-13
+
+Model compatibility for the Claude 5.2 / 5.5 lineup: a fuller registry, a stricter lint, and a generated cross-model matrix.
+
+### Added
+- **Registry schema 2** (`config/models.json`). Each model (`claude-fable-5-2`, `claude-mythos-5-2`, `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`) now carries:
+  - `capabilities`: context window, output cap, thinking mode, sampling policy, forced `tool_choice`, prefill, refusal categories.
+  - `effort_guide`: the API default, the `routine`, `agentic` and `hardest` levels, and the levels at which the model stops a long task early. Fable 5.2 is `medium` / `high` / `xhigh`.
+  - `deprecations`: 13 rules for retired and deprecated ids. An older version that is not listed counts as `superseded`.
+- **Lint rule M011** `missing-completion-instructions`: a long-horizon subagent with no `# Finishing work` block at an effort level where the model stops early (Fable at `low` or `medium`; Sonnet and Haiku at `low`). −6.
+- **Lint rule M012** `stale-model-id`: a retired (−10), deprecated (−6) or superseded (−3) Claude model id, in frontmatter or body.
+- **`tq-forge compat [--write|--check|--json]`** (`scripts/lib/compat_matrix.py`) scores every bundled skill and subagent template under each model's rules and writes [`docs/MODEL_COMPATIBILITY.md`](docs/MODEL_COMPATIBILITY.md): score per model, dry-test, minimum model tier, starting effort, pass or fail. 27 of 27 pass.
+- 59 lint fixture cases (`scripts/lib/lint_cases.py`) and `tests/test_model_compat.py`. `npm test` now runs 971 scorer assertions (was 320) and 200 unit tests (was 165).
+
+### Changed
+- **A stale pinned id no longer switches the model rules off.** A file with `model: claude-sonnet-4-6` is linted against the current Sonnet and gets M012. Before, it got no model rules and scored as clean.
+- **M001** also catches `budgetTokens` and `thinking_budget`; its fix names adaptive thinking and `output_config.effort`.
+- **M004** also catches reasoning headers ("begin every response with a Reasoning section"), scratchpad blocks and "print the raw chain-of-thought". Its message names the `reasoning_extraction` refusal.
+- **M008** also catches `topP`, and no longer flags the two default values Sonnet 5.5 and Haiku 5.5 accept (`temperature: 1`, `top_p: 0.99`).
+- **Completion instructions in every subagent template.** `code-reviewer`, `security-auditor`, `test-runner`, `omni-scout`, `input-reader` and both MCP worker templates gain a `# Finishing work` block. `scaffold agent` adds the `keep-working` block when the chosen model and effort need one.
+- **`sync-models`** moves an id the registry lists as retired by name (`claude-2.1`) to its replacement, and carries capabilities and the effort guide over to a new model. `claude-mythos-preview` is reported, not rewritten.
+- The weekly model-sync workflow regenerates the matrix; CI runs `compat --check`.
+- README: the hand-written scorecard (13 skills, outdated scores) is replaced by a link to the generated matrix.
+
+### Fixed
+- **The weekly model sync could not open its pull request after a real release.** Nine tests named today's model ids, so the job's own `npm test` failed once the registry changed. They are now relative to the registry; a simulated release of three models passes both suites.
+- `optimize` wrote MCP workers with a hardcoded `claude-haiku-5-5`, so after a sync the next `auto-improve` pass rewrote them. It now uses the registry's worker model.
+- A registry synced by an older tq-forge (schema 1) in `~/.tq-forge/` no longer shadows the bundled schema 2 registry.
+
+### Notes
+- The matrix and the lint are static: no model is called. The minimum tier is an estimate from the tools a file uses and the length of its procedure.
+- `/tq-forge-agent` now shows `--model fable` (an alias) in its example, so the skill does not go stale on the next release.
+
 ## [1.2.1] — 2026-11-13
 
 The input-router shows large output in a short form you can undo.

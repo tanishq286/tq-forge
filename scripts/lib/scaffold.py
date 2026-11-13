@@ -29,6 +29,7 @@ import urllib.parse
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import frontmatter  # noqa: E402
+import model_lint  # noqa: E402
 import models  # noqa: E402
 import schema  # noqa: E402
 
@@ -203,6 +204,22 @@ def _builtin_agent(args):
     return name, model, effort, text
 
 
+COMPLETION_SNIPPETS = ("finishing-work", "keep-working")
+
+
+def agent_snippets(profile, effort):
+    """Prompt snippets for a scaffolded agent: the profile's, plus completion instructions when needed.
+
+    A model that is documented to stop a long task early at `effort` gets the
+    short `keep-working` block even when its profile does not list one.
+    """
+    names = list(profile["snippets"])
+    needs = model_lint.needs_completion_instructions(profile["id"], effort)
+    if needs and not set(names) & set(COMPLETION_SNIPPETS):
+        names.insert(0, "keep-working")
+    return names
+
+
 def _custom_agent(args):
     intent = clean_intent(args.intent)
     name = checked_name(args.name or slugify(intent))
@@ -215,7 +232,7 @@ def _custom_agent(args):
         "EFFORT": effort,
         "TOOLS": DEFAULT_AGENT_TOOLS,
         "INTENT": intent,
-        "SNIPPETS": "\n\n".join(models.snippet(item) for item in profile["snippets"]),
+        "SNIPPETS": "\n\n".join(models.snippet(item) for item in agent_snippets(profile, effort)),
     })
     return name, profile["id"], effort, text
 

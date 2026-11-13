@@ -11,10 +11,16 @@ Validates:
 4. Deterministic scaffolding of skills, subagents, MCP servers, and hooks
 5. Lifecycle hooks JSON stdin validation and exit-code enforcement (exit 0 allow, exit 2 block)
 6. Quantitative quality scorer benchmarks (0-100 scale)
+7. Model-compatibility lint: thinking config, sampling parameters, reasoning in
+   the reply, completion instructions and stale model ids, per model
+8. Registry capabilities, effort guide and deprecations, and their agreement with the lint
+9. Cross-model compatibility matrix and docs/MODEL_COMPATIBILITY.md
 
 Exit code 0 on all tests passing, non-zero on any failure.
 """
 
+import contextlib
+import io
 import json
 import os
 import pathlib
@@ -27,8 +33,11 @@ import time
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts" / "lib"))
 
+import compat_matrix  # noqa: E402
 import drytest  # noqa: E402
 import frontmatter  # noqa: E402
+import lint_cases  # noqa: E402
+import model_lint  # noqa: E402
 import model_sync  # noqa: E402
 import models  # noqa: E402
 import scaffold  # noqa: E402
@@ -443,6 +452,217 @@ def test_model_registry_and_lifecycle(suite: TestSuite):
     suite.log_pass("auto-improve-session hook", "silent, exit 0, threshold + interval + model-sync triggers")
 
 
+def _fired(rule_id, text, model_id, **options):
+    return [finding for finding in model_lint.lint(text, model_id, **options) if finding["id"] == rule_id]
+
+
+def test_model_compat_lint(suite: TestSuite):
+    suite.log_section("7. Model-Compatibility Lint (Fable 5.2 / Adaptive Thinking Anti-Patterns)")
+
+    for rule_id, model_id, text, must_fire, why in lint_cases.PATTERN_CASES:
+        target, _ = models.lint_target(model_id)
+        fired = bool(_fired(rule_id, text, target))
+        suite.assert_true(fired == must_fire,
+                          f"{rule_id} on {model_id}: expected {'a finding' if must_fire else 'no finding'} for {why}")
+    by_rule = {}
+    for rule_id, *_ in lint_cases.PATTERN_CASES:
+        by_rule[rule_id] = by_rule.get(rule_id, 0) + 1
+    suite.log_pass("pattern rules", ", ".join(f"{rule} x{count}" for rule, count in sorted(by_rule.items())))
+
+    for model_id, text, effort, must_fire, why in lint_cases.COMPLETION_CASES:
+        fired = bool(_fired("M011", text, model_id, kind="subagent", effort=effort))
+        suite.assert_true(fired == must_fire,
+                          f"M011 on {model_id}: expected {'a finding' if must_fire else 'no finding'} for {why}")
+    suite.assert_true(not _fired("M011", lint_cases.subagent(effort="medium"), lint_cases.FABLE, kind="skill"),
+                      "M011 is about subagents; a skill is not checked")
+    suite.log_pass("M011 missing-completion-instructions", f"{len(lint_cases.COMPLETION_CASES) + 1} cases")
+
+    for text, penalty, why in lint_cases.STALE_ID_CASES:
+        found = _fired("M012", text, lint_cases.FABLE)
+        got = found[0]["penalty"] if found else None
+        suite.assert_true(got == penalty, f"M012: expected penalty {penalty} for {why}, got {got}")
+    suite.assert_true(bool(_fired("M012", "model: claude-3-5-sonnet-20241022", None)),
+                      "M012 fires for a target the lint has no model rules for")
+    suite.log_pass("M012 stale-model-id", f"{len(lint_cases.STALE_ID_CASES) + 1} cases, penalties 10 / 6 / 3")
+
+    _assert_stale_pin_is_scored(suite)
+    _assert_templates_carry_completion(suite)
+    _assert_scaffold_adds_completion(suite)
+
+
+def _assert_stale_pin_is_scored(suite: TestSuite):
+    # A stale pinned id used to switch every model rule off. It must now cost points.
+    with tempfile.TemporaryDirectory(prefix="tq-forge-lint-") as tmp:
+        stale = pathlib.Path(tmp) / "stale.md"
+        body = lint_cases.subagent(effort="high", extra=lint_cases.FINISHING)
+        stale.write_text(body.replace("effort: high", "model: claude-sonnet-4-6\neffort: high")
+                         + '\nRequest: thinking={"type": "enabled", "budget_tokens": 8000}\n', encoding="utf-8")
+        report = score.evaluate(stale)
+        ids = {finding["id"] for finding in report["findings"]}
+        suite.assert_true(report["lint_model"] == lint_cases.SONNET,
+                          "a stale pinned id is linted against its family's current model")
+        suite.assert_true({"M001", "M012"} <= ids, f"stale pin + budget must both be reported, got {sorted(ids)}")
+        clean = pathlib.Path(tmp) / "clean.md"
+        clean.write_text(body.replace("effort: high", f"model: {lint_cases.SONNET}\neffort: high"), encoding="utf-8")
+        suite.assert_true(score.evaluate(clean)["score"] > report["score"],
+                          "the same file with a current id and no budget scores higher")
+    suite.log_pass("stale pin is scored", "linted against the family's current model, M001 + M012 reported")
+
+
+def _assert_templates_carry_completion(suite: TestSuite):
+    # Every subagent template must carry completion instructions, because `--effort` can lower
+    # any of them to a level at which the target model stops early.
+    templates = compat_matrix.subagent_files(ROOT)
+    for path in templates:
+        text = path.read_text(encoding="utf-8")
+        _, body, _ = frontmatter.read(text)
+        suite.assert_true(model_lint.has_completion_instructions(body),
+                          f"{path.name}: needs explicit completion instructions (a '# Finishing work' block)")
+        for family, model_id in compat_matrix.column_models(models.generations()):
+            for effort in compat_matrix.SWEEP_EFFORTS:
+                suite.assert_true(not _fired("M011", text, model_id, kind="subagent", effort=effort),
+                                  f"{path.name}: M011 fires on {family} at {effort}")
+    suite.log_pass("subagent templates", f"{len(templates)} templates carry completion instructions at every effort")
+
+
+def _assert_scaffold_adds_completion(suite: TestSuite):
+    with tempfile.TemporaryDirectory(prefix="tq-forge-scaffold-") as tmp:
+        for alias, effort, expected in (("fable", "medium", True), ("sonnet", "low", True),
+                                        ("haiku", "low", True), ("opus", "low", False), ("sonnet", "medium", False)):
+            name = f"agent-{alias}-{effort}"
+            with contextlib.redirect_stdout(io.StringIO()):
+                code = scaffold.main(["scaffold", "agent", "triage failing nightly builds", "--name", name,
+                                      "--model", alias, "--effort", effort, "--out", tmp, "--json"])
+            suite.assert_true(code == 0, f"scaffold agent --model {alias} --effort {effort} must succeed")
+            text = (pathlib.Path(tmp) / ".claude" / "agents" / f"{name}.md").read_text(encoding="utf-8")
+            suite.assert_true(model_lint.has_completion_instructions(text) == expected,
+                              f"scaffolded {alias} agent at {effort}: completion block expected={expected}")
+            suite.assert_true(not _fired("M011", text, models.resolve(alias), kind="subagent"),
+                              f"scaffolded {alias} agent at {effort} must not trip M011")
+    suite.log_pass("scaffold agent", "adds the keep-working block where the model stops early")
+
+
+def test_registry_capabilities(suite: TestSuite):
+    suite.log_section("8. Registry Capabilities, Effort Guide & Deprecation Rules")
+
+    registry = json.loads((ROOT / "config" / "models.json").read_text(encoding="utf-8"))
+    suite.assert_true(registry["schema"] == 2, "config/models.json is schema 2")
+    levels = models.effort_levels()
+    # The four ids this release registers stay listed after a later sync; "current" is checked per family.
+    for required in ("claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"):
+        suite.assert_true(required in registry["models"], f"{required} is registered")
+    for family in model_sync.FAMILIES:
+        current = registry["families"][family]["current"]
+        suite.assert_true(models.status(current, registry)["status"] == "current", f"{current} is current")
+    for model_id, entry in registry["models"].items():
+        guide, caps = entry["effort_guide"], entry["capabilities"]
+        for key in ("api_default", "routine", "agentic", "hardest"):
+            suite.assert_true(guide[key] in levels, f"{model_id}: effort_guide.{key} is a known level")
+        suite.assert_true(levels.index(guide["routine"]) <= levels.index(guide["agentic"]) <= levels.index(guide["hardest"]),
+                          f"{model_id}: routine <= agentic <= hardest")
+        suite.assert_true(entry["effort"] == guide["agentic"], f"{model_id}: starting effort is the agentic level")
+        suite.assert_true(caps["effort_levels"] == levels, f"{model_id}: supports every effort level")
+        suite.assert_true(caps["context_window"] >= 200000 and 0 < caps["max_output"] <= caps["context_window"],
+                          f"{model_id}: context window and output cap are plausible")
+        suite.assert_true(caps["sampling"] in ("rejected", "default-only"), f"{model_id}: sampling policy is known")
+        suite.assert_true(caps["prefill"] is False, f"{model_id}: prefill is rejected")
+        suite.assert_true(set(entry["prompting"]) <= set(registry["prompting_rules"]),
+                          f"{model_id}: every prompting rule is described")
+        # The registry and the lint must tell the same story about each model.
+        family = model_lint.family(model_id)
+        for rule in model_lint.RULES:
+            if "registry" not in rule:
+                continue
+            suite.assert_true((family in rule["models"]) == (rule["registry"] in entry["prompting"]),
+                              f"{model_id}: lint rule {rule['id']} and registry rule '{rule['registry']}' disagree")
+        suite.assert_true(set(guide["stops_early_at"]) == set(model_lint.EARLY_STOP_EFFORTS.get(family, ())),
+                          f"{model_id}: stops_early_at matches the lint's early-stop levels")
+        suite.assert_true(("reasoning_extraction" in caps["refusal_categories"])
+                          == ("no-reasoning-in-reply" in entry["prompting"]),
+                          f"{model_id}: reasoning_extraction category and rule agree")
+        suite.assert_true((caps["thinking"] == "always-on" or caps["thinking_off"] == "between_tools")
+                          == ("thinking-always-on" in entry["prompting"]),
+                          f"{model_id}: thinking capability and rule agree")
+        suite.assert_true((not caps["forced_tool_choice"]) == ("no-forced-tool-choice" in entry["prompting"]),
+                          f"{model_id}: forced tool_choice capability and rule agree")
+    suite.log_pass("capabilities + effort guide", f"{len(registry['models'])} models agree with {len(model_lint.RULES)} lint rules")
+
+    fable = registry["models"][lint_cases.FABLE]["effort_guide"]
+    suite.assert_true((fable["routine"], fable["agentic"], fable["hardest"]) == ("medium", "high", "xhigh"),
+                      "the current Fable's effort guide is medium / high / xhigh")
+    suite.assert_true(fable["stops_early_at"] == ["low", "medium"], "the current Fable can stop early at low and medium")
+
+    _assert_deprecation_rules(suite, registry)
+    _assert_bundled_files_name_current_ids(suite)
+
+
+def _assert_deprecation_rules(suite: TestSuite, registry):
+    for model_id, expected in (("claude-3-5-sonnet-20241022", "retired"), ("claude-opus-4-1", "retired"),
+                               ("claude-2.1", "retired"), ("claude-sonnet-4-5", "deprecated"),
+                               ("claude-mythos-preview", "deprecated"), ("claude-opus-5", "superseded"),
+                               ("claude-fable-5-1", "superseded"), ("claude-haiku-4-5", "superseded"),
+                               (lint_cases.newer(lint_cases.FABLE), "unknown"), ("gpt-5", "unknown")):
+        suite.assert_true(models.status(model_id, registry)["status"] == expected, f"{model_id} is {expected}")
+    for rule in registry["deprecations"]:
+        suite.assert_true(rule["status"] in ("retired", "deprecated"), "a deprecation rule is retired or deprecated")
+        suite.assert_true(("id" in rule and rule.get("replacement") in registry["models"])
+                          or (rule.get("family") in model_sync.FAMILIES and len(rule.get("version", [])) == 2),
+                          f"deprecation rule {rule} names an id with a registered replacement, or a family version")
+    suite.assert_true(model_sync.upgrade_target("claude-2.1", registry) == models.status("claude-2.1", registry)["replacement"],
+                      "sync-models moves a retired id to its listed replacement")
+    suite.assert_true(model_sync.upgrade_target("claude-sonnet-4-6", registry) == lint_cases.SONNET,
+                      "sync-models moves a superseded id to the family's current model")
+    suite.assert_true(model_sync.upgrade_target("claude-mythos-preview", registry) is None,
+                      "sync-models leaves an id with two possible successors to a person")
+    suite.assert_true(model_sync.upgrade_target(lint_cases.FABLE, registry) is None, "a current id is left alone")
+    suite.log_pass("deprecation rules", f"{len(registry['deprecations'])} rules; retired, deprecated and superseded ids resolve")
+
+
+def _assert_bundled_files_name_current_ids(suite: TestSuite):
+    # No bundled file may pin or mention a model id that is behind the registry.
+    scanned = 0
+    for path in [*sorted((ROOT / "templates").rglob("*.md")), *sorted((ROOT / "templates").rglob("*.tmpl")),
+                 *sorted((ROOT / "skills").rglob("SKILL.md"))]:
+        scanned += 1
+        suite.assert_true(not _fired("M012", path.read_text(encoding="utf-8"), None),
+                          f"{path.relative_to(ROOT)}: names a stale model id")
+    suite.log_pass("bundled files", f"{scanned} templates and skills name no stale model id")
+
+
+def test_compat_matrix(suite: TestSuite):
+    suite.log_section("9. Cross-Model Compatibility Matrix (docs/MODEL_COMPATIBILITY.md)")
+
+    report = compat_matrix.build(ROOT)
+    families = [model["family"] for model in report["models"]]
+    suite.assert_true(families == list(compat_matrix.COLUMNS), "the matrix has one column per model family")
+    suite.assert_true(len(report["skills"]) == 18, f"18 bundled skills, found {len(report['skills'])}")
+    suite.assert_true(len(report["subagents"]) == 9, f"9 subagent templates, found {len(report['subagents'])}")
+    suite.assert_true(len(report["base_agents"]) == 8, f"8 base agent templates, found {len(report['base_agents'])}")
+    for item in report["skills"] + report["subagents"]:
+        for family in families:
+            suite.assert_true(item["scores"][family] >= compat_matrix.PASS_SCORE,
+                              f"{item['name']}: {item['scores'][family]}/100 under {family} is below the gate")
+        suite.assert_true(item["pass"] and item["dry_test"]["ok"], f"{item['name']}: must pass the matrix")
+        suite.assert_true(item["min_tier"] in models.TIERS, f"{item['name']}: minimum tier is a known tier")
+        suite.assert_true(item["effort"] in models.effort_levels(), f"{item['name']}: effort is a known level")
+        suite.assert_true(not item["effort_sweep"], f"{item['name']}: effort sweep findings {item['effort_sweep']}")
+    for item in report["subagents"]:
+        suite.assert_true(item["min_tier"] == model_lint.family(item["pinned"]),
+                          f"{item['name']}: minimum tier is the tier of the model it pins")
+    for item in report["base_agents"]:
+        suite.assert_true(not any(item["findings"].values()), f"base template {item['name']}: lint findings")
+    lowest = min(min(item["scores"].values()) for item in report["skills"] + report["subagents"])
+    suite.log_pass("matrix", f"27 artifacts x {len(families)} models, lowest score {lowest}/100")
+
+    doc = ROOT / compat_matrix.DOC
+    suite.assert_true(doc.is_file(), f"{compat_matrix.DOC} must exist")
+    suite.assert_true(doc.read_text(encoding="utf-8") == compat_matrix.render(report),
+                      f"{compat_matrix.DOC} is out of date; run `node bin/cli.js compat --write`")
+    suite.assert_true(str(compat_matrix.DOC).replace("\\", "/") in (ROOT / "README.md").read_text(encoding="utf-8"),
+                      "README.md links the compatibility matrix")
+    suite.log_pass(str(compat_matrix.DOC), "matches the generator and is linked from README.md")
+
+
 def print_summary_table(suite: TestSuite):
     print(f"\n{C_BOLD}{C_CYAN}=== Quantitative Quality Scorer Benchmarks (0–100 Scale) ==={C_RESET}")
     header = f"{'Artifact':<28} {'Kind':<10} {'Target Model':<18} {'Score':>6}  {'Dimensions':<30}"
@@ -466,6 +686,9 @@ def main():
         test_dynamic_scaffolding(suite)
         test_hook_lifecycle_enforcement(suite)
         test_model_registry_and_lifecycle(suite)
+        test_model_compat_lint(suite)
+        test_registry_capabilities(suite)
+        test_compat_matrix(suite)
     except TestFailure as e:
         print(f"\n{C_RED}❌ Test assertion failed: {e}{C_RESET}", file=sys.stderr)
         return 1

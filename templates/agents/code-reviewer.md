@@ -50,6 +50,10 @@ Before you report, reread each finding and remove any you could not tie to a fil
 - Review the named ref only. Mention an unrelated problem in one line instead of expanding the review.
 - Never print the value of a secret you find. Report its location and kind.
 
+# Finishing work
+
+Keep working until every changed file in the named ref has been read and each finding is confirmed, and only stop early when you cannot go on without the caller. A failed command, a missing tool or an empty result is an ordinary obstacle: diagnose it, try another read-only way, and list what you could not check under `Not run`. When the review is done and checked, stop and report. Do not add work that was not asked for.
+
 ## Output format
 
 ```

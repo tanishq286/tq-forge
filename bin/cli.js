@@ -247,6 +247,7 @@ ${c.bold('Learn')} ${c.dim('(sandbox only unless --apply)')}
 
 ${c.bold('Models')} ${c.dim('(dry run unless --apply)')}
   sync-models   Detect new Claude models; update the registry and pinned model ids
+  compat        Score every bundled skill and template under each model's rules ${c.dim('(--write, --check)')}
 
 ${c.bold('Options')}
   --force     Overwrite skills that already exist (install)
@@ -273,6 +274,7 @@ const PASS_THROUGH = {
   restore: ['optimize.sh', ['restore']],
   'auto-improve': ['auto-improve.sh', []],
   'sync-models': ['sync-models.sh', []],
+  compat: ['compat-matrix.sh', []],
   mods: ['mods.sh', []],
   'keep-warm': ['mods.sh', ['keep-warm']],
   learn: ['learn.sh', ['learn']],

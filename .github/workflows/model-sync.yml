@@ -4,7 +4,8 @@ name: Model sync
 #
 # Once a week (and on demand) this asks for the live list of Claude model ids.
 # When a family has a newer version it updates config/models.json and the
-# templates, runs the test suite, and opens a pull request with the change.
+# templates, regenerates docs/MODEL_COMPATIBILITY.md, runs the test suite, and
+# opens a pull request with the change.
 #
 # ANTHROPIC_API_KEY is optional. With it the ids come from Anthropic's
 # /v1/models; without it they come from OpenRouter's public model list.
@@ -55,6 +56,11 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: node bin/cli.js sync-models --root . --apply --trust-source
 
+      - name: Regenerate the compatibility matrix
+        # The matrix names the current model of each family, so it changes with the registry.
+        # A failing artifact is reported by the test suite in the next step.
+        run: node bin/cli.js compat --write || true
+
       - name: Run the test suite
         run: npm test
 
@@ -70,11 +76,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -b "$branch"
-          git add config templates
+          git add config templates docs/MODEL_COMPATIBILITY.md
           git commit -m "chore: sync Claude model registry"
           git push --force origin "$branch"
           gh pr create \
             --title "chore: sync Claude model registry" \
-            --body "A newer Claude model was released. This updates \`config/models.json\`, the model profiles and the pinned \`model:\` ids in the templates. Prices marked \`inherited_from\` were copied from the previous model and need checking before merge. The test suite passed on this branch." \
+            --body "A newer Claude model was released. This updates \`config/models.json\`, the model profiles, the pinned \`model:\` ids in the templates and \`docs/MODEL_COMPATIBILITY.md\`. Prices marked \`inherited_from\` were copied from the previous model and need checking before merge. The test suite passed on this branch." \
             --base "${GITHUB_REF_NAME}" --head "$branch" \
             || echo "::warning::Branch $branch was pushed, but the pull request could not be opened. Enable 'Allow GitHub Actions to create and approve pull requests' or open it by hand."

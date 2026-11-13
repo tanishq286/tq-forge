@@ -175,7 +175,7 @@ It does not write missing sections for you, turn off a plugin, or (unless you pa
 
 ### Model sync
 
-`config/models.json` is a registry of Claude model generations: the current model of each family with its role (`orchestrator`, `daily-driver`, `fast-worker`), starting effort, prices and prompting rules, plus the recommended lead + subagent pair (today `claude-fable-5-2` + `claude-haiku-5-5`).
+`config/models.json` is a registry of Claude model generations: the current model of each family (`claude-fable-5-2`, `claude-mythos-5-2`, `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`) with its role (`orchestrator`, `daily-driver`, `fast-worker`), capabilities, an effort guide, prices and prompting rules, plus a table of retired and deprecated ids and the recommended lead + subagent pair (today `claude-fable-5-2` + `claude-haiku-5-5`).
 
 ```bash
 npx tq-forge sync-models                 # dry run
@@ -185,10 +185,32 @@ npx tq-forge sync-models --offline       # no network call
 
 `sync-models` reads the live list of model ids from Anthropic's `/v1/models` when `ANTHROPIC_API_KEY` is set, otherwise from OpenRouter's public model list, and falls back to the registry itself when neither answers. Only Anthropic's own list is acted on: a newer id seen on OpenRouter is reported and nothing is rewritten unless you pass `--trust-source`. An id more than one major or five minor versions ahead is ignored either way. When a family has a newer version (`claude-fable-*`, `claude-mythos-*`, `claude-opus-*`, `claude-sonnet-*`, `claude-haiku-*`) it:
 
-1. adds the model to the registry. Role, effort and prompting rules carry over from the version it replaces. Prices come from the source when it reports them; otherwise they are copied and marked `inherited_from`, which means "check this".
-2. rewrites pinned `model:` ids that are now behind, in `.claude/agents/**/*.md` and `.claude/settings.json` (`model`, `env.CLAUDE_CODE_SUBAGENT_MODEL`, `modelSettings`) under `--root`, and in the tq-forge templates. Aliases such as `opus` or `inherit` are left alone.
+1. adds the model to the registry. Role, effort guide, capabilities and prompting rules carry over from the version it replaces. Prices come from the source when it reports them; otherwise they are copied and marked `inherited_from`, which means "check this".
+2. rewrites pinned `model:` ids that are now behind, in `.claude/agents/**/*.md` and `.claude/settings.json` (`model`, `env.CLAUDE_CODE_SUBAGENT_MODEL`, `modelSettings`) under `--root`, and in the tq-forge templates. Aliases such as `opus` or `inherit` are left alone. A retired id the registry lists by name (`claude-2.1`) moves to its listed replacement; `claude-mythos-preview` has two possible successors, so it is reported and left for you.
 
-The model-compatibility lint is keyed by family, so a model added this way is linted from the day it is added. `.github/workflows/model-sync.yml` runs the sync weekly (with `--trust-source`, since its output is a pull request), runs `npm test`, and opens that pull request when something changed. A person still merges it: a new model can change behavior that no registry field describes.
+The model-compatibility lint is keyed by family, so a model added this way is linted from the day it is added. `.github/workflows/model-sync.yml` runs the sync weekly (with `--trust-source`, since its output is a pull request), regenerates the compatibility matrix, runs `npm test`, and opens that pull request when something changed. A person still merges it: a new model can change behavior that no registry field describes.
+
+### Model compatibility
+
+`tq-forge score` subtracts points for instructions the target model rejects or handles badly. The checks are static and deterministic: no model is called.
+
+| Rule | What it flags | Applies to |
+| :--- | :--- | :--- |
+| M001 | `thinking: {"type": "enabled", "budget_tokens": N}` or any fixed thinking budget. Use adaptive thinking and `output_config.effort`. | all models |
+| M010 | `thinking: {"type": "disabled"}`. Lower `effort` instead. | Fable, Opus, Sonnet |
+| M008 | `temperature`, `top_p`, `top_k`. Sonnet 5.5 and Haiku 5.5 still accept the default values. | all models |
+| M004 | A request for raw reasoning or chain of thought in the reply, which can be declined as `reasoning_extraction`. | Fable, Opus, Sonnet |
+| M011 | A long-horizon subagent with no completion instructions at an effort level where the model stops early (Fable at `low` or `medium`; Sonnet and Haiku at `low`). | Fable, Sonnet, Haiku |
+| M012 | A retired (−10), deprecated (−6) or superseded (−3) Claude model id. | any target |
+
+M002, M003, M005, M006, M007 and M009 cover token budgets shown to the model, think-less instructions, thinking incantations, history editing, forced `tool_choice` and prefill. A file that pins an outdated id such as `claude-sonnet-4-6` is linted against its family's current model; before 1.3.0 it got no model rules at all.
+
+```bash
+npx tq-forge score .claude/agents/my-agent.md   # findings with line numbers and fixes
+npx tq-forge compat                             # every bundled skill and template under each model
+```
+
+[`docs/MODEL_COMPATIBILITY.md`](docs/MODEL_COMPATIBILITY.md) is the generated matrix: each bundled skill and subagent template with its score under Fable 5.2, Opus 5.5, Sonnet 5.5 and Haiku 5.5, the minimum model tier, the starting effort level and pass or fail. `npm test` fails when that file differs from the generator's output.
 
 ### Benchmark
 
@@ -279,28 +301,9 @@ The collector (`scripts/lib/intel_scout.py`) uses `yt-dlp` and `gh` when they ar
 
 ## Benchmark Scorecard (Quantitative Quality Scorer)
 
-Every bundled skill and subagent archetype is validated against our deterministic 0–100 quality scoring engine (`scripts/quality-score.sh`):
+Every bundled skill and subagent template is scored by the deterministic 0–100 engine (`scripts/quality-score.sh`) under the rules of each current Claude model. All 27 artifacts (18 skills, 9 subagent templates) pass the promotion gate of 70 under Fable 5.2, Opus 5.5, Sonnet 5.5 and Haiku 5.5, and `npm test` fails if one stops passing.
 
-| Artifact | Kind | Target Model | Score (0–100) | Structural Breakdown | Status |
-| :--- | :---: | :---: | :---: | :--- | :---: |
-| **`tq-forge`** | Skill | `claude-fable-5-2` | **90/100** | Clarity: 9, Action: 9, Complete: 9, Specific: 9 | ✅ PASS |
-| **`tq-forge-agent`** | Skill | `claude-fable-5-2` | **90/100** | Clarity: 9, Action: 9, Complete: 9, Specific: 9 | ✅ PASS |
-| **`tq-forge-improve-all`**| Skill | `claude-fable-5-2` | **90/100** | Clarity: 9, Action: 9, Complete: 9, Specific: 9 | ✅ PASS |
-| **`tq-forge-queue`** | Skill | `claude-fable-5-2` | **90/100** | Clarity: 9, Action: 9, Complete: 9, Specific: 9 | ✅ PASS |
-| **`tq-forge-resume`** | Skill | `claude-fable-5-2` | **90/100** | Clarity: 9, Action: 9, Complete: 9, Specific: 9 | ✅ PASS |
-| **`tq-forge-list`** | Skill | `claude-fable-5-2` | **90/100** | Clarity: 9, Action: 9, Complete: 9, Specific: 9 | ✅ PASS |
-| **`tq-forge-test`** | Skill | `claude-fable-5-2` | **85/100** | Clarity: 9, Action: 9, Complete: 9, Specific: 7 | ✅ PASS |
-| **`tq-forge-agents`** | Skill | `claude-fable-5-2` | **85/100** | Clarity: 9, Action: 9, Complete: 9, Specific: 7 | ✅ PASS |
-| **`tq-forge-improve`** | Skill | `claude-fable-5-2` | **85/100** | Clarity: 9, Action: 9, Complete: 9, Specific: 7 | ✅ PASS |
-| **`tq-forge-promote`** | Skill | `claude-fable-5-2` | **80/100** | Clarity: 5, Action: 9, Complete: 9, Specific: 9 | ✅ PASS |
-| **`tq-forge-scan`** | Skill | `claude-fable-5-2` | **80/100** | Clarity: 5, Action: 9, Complete: 9, Specific: 9 | ✅ PASS |
-| **`tq-forge-skill`** | Skill | `claude-fable-5-2` | **80/100** | Clarity: 5, Action: 9, Complete: 9, Specific: 9 | ✅ PASS |
-| **`tq-forge-status`** | Skill | `claude-fable-5-2` | **80/100** | Clarity: 5, Action: 9, Complete: 9, Specific: 9 | ✅ PASS |
-| **`fable-5-2-orchestrator`** | Subagent | `claude-fable-5-2` | **90/100** | Clarity: 9, Action: 9, Complete: 9, Specific: 9, Consistency: 9 | ✅ PASS |
-| **`fable-5-2-advisor`** | Subagent | `claude-fable-5-2` | **90/100** | Clarity: 9, Action: 9, Complete: 9, Specific: 9, Consistency: 9 | ✅ PASS |
-| **`code-reviewer`** | Subagent | `claude-opus-5-5` | **90/100** | Clarity: 9, Action: 9, Complete: 9, Specific: 9, Consistency: 9 | ✅ PASS |
-| **`security-auditor`** | Subagent | `claude-opus-5-5` | **90/100** | Clarity: 9, Action: 9, Complete: 9, Specific: 9, Consistency: 9 | ✅ PASS |
-| **`test-runner`** | Subagent | `claude-sonnet-5-5` | **90/100** | Clarity: 9, Action: 9, Complete: 9, Specific: 9, Consistency: 9 | ✅ PASS |
+The current scores, with the minimum model tier and starting effort for each artifact, are generated into [`docs/MODEL_COMPATIBILITY.md`](docs/MODEL_COMPATIBILITY.md).
 
 ---
 
@@ -398,7 +401,7 @@ bash scripts/scaffold.sh mcp --name sqlite-db --command python3 --arg -m --arg s
 npm test
 ```
 
-Runs two suites: `scripts/test-runner.py` (320 assertions on manifests, frontmatter schemas, hook exit codes, scaffolding from one-line intents, the 0–100 scorer, the model registry, the auto-improve session hook and `postinstall`) and `tests/` (141 tests: `test_optimize.py` on the context optimizer, lossless mode, restore safety, auto-improve and model sync; `test_mods.py` on every mod, the installer and the savings log; `test_learn.py` on the collectors with the network faked, the sanitizer, the synthesizer and the rubric).
+Runs two suites: `scripts/test-runner.py` (971 assertions on manifests, frontmatter schemas, hook exit codes, scaffolding from one-line intents, the 0–100 scorer, the model registry, the model-compatibility lint, the cross-model matrix, the auto-improve session hook and `postinstall`) and `tests/` (200 tests: `test_optimize.py` on the context optimizer, lossless mode, restore safety, auto-improve and model sync; `test_mods.py` on every mod, the installer and the savings log; `test_learn.py` on the collectors with the network faked, the sanitizer, the synthesizer and the rubric; `test_model_compat.py` on the registry, the lint cases and the matrix; `test_ccr.py` on the reversible short forms; `test_manifests.py` on versions and documented counts).
 
 ---
 

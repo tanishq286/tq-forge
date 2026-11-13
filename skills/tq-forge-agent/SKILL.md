@@ -61,7 +61,7 @@ source "$S/common.sh" && tq_ensure_home
    ```bash
    bash "$S/scaffold.sh" list
    bash "$S/scaffold.sh" agent --template code-reviewer --out .
-   bash "$S/scaffold.sh" agent "<intent>" --model claude-fable-5-2 --effort high --isolated
+   bash "$S/scaffold.sh" agent "<intent>" --model fable --effort high --isolated
    ```
    `--isolated` sets `isolation: worktree`; the worktree starts from the
    default branch, so commit the work the subagent must see first.

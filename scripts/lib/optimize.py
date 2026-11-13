@@ -67,7 +67,6 @@ SCRIPT_MIN_LINES = 8
 MIN_LEAD_CHARS = 20
 TRIGGER_SHARE = 3  # a lead-in may take up to a third of the limit when the trigger has to be cut
 SUMMARY_LINES = 15
-WORKER_MODEL = "claude-haiku-5-5"
 HYGIENE_MARK = "Context hygiene:"
 DEFAULT_EFFORT = "medium"
 SETTINGS_EFFORTS = ("low", "medium", "high", "xhigh")  # the values `effortLevel` accepts in settings.json
@@ -244,7 +243,8 @@ def plan_mcp(root, keep):
                        f"summary. Use when a task needs the {server} server.")
         plan["writes"][target] = scaffold.render("mcp/isolated-worker.md.tmpl", {
             "NAME": worker_name(server), "DESCRIPTION": json.dumps(description),
-            "MODEL": WORKER_MODEL, "SERVER": server, "SUMMARY_LINES": str(SUMMARY_LINES),
+            "MODEL": models.subagent_model(),  # the registry's worker model, so a sync keeps it current
+            "SERVER": server, "SUMMARY_LINES": str(SUMMARY_LINES),
             "SERVER_BLOCK": scaffold._yaml_server_block(server, entry),
         })
         moved[server] = target

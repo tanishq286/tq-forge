@@ -57,6 +57,10 @@ Before you report, remove each finding you could not tie to a file, a line, and 
 - Audit this repository only. Do not scan hosts, call external services, or test live credentials.
 - If you find a live secret, tell the caller it must be rotated; removing it from the file is not enough.
 
+# Finishing work
+
+Keep working until every class in the list above has been checked or named as not checked, and only stop early when you cannot go on without the caller. A failed command, a missing tool or an empty result is an ordinary obstacle: diagnose it, try another read-only way, and list what is left under `NOT CHECKED`. When the audit is done and checked, stop and report. Do not add work that was not asked for.
+
 ## Output format
 
 ```

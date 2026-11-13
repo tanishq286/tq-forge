@@ -214,8 +214,13 @@ def detect(target):
     return None, target
 
 
-def evaluate(target, model_override=None):
-    """Score one artifact and return the report payload."""
+def evaluate(target, model_override=None, effort_override=None):
+    """Score one artifact and return the report payload.
+
+    `model_override` lints against another model than the one the file pins;
+    `effort_override` asks what the lint would say at another effort level.
+    Neither changes the structural dimensions.
+    """
     kind, path = detect(target)
     if kind is None:
         raise ValueError(f"don't recognize target shape at {target}")
@@ -233,7 +238,7 @@ def evaluate(target, model_override=None):
         lint_text = text
 
     lint_model, lint_note = models.lint_target(model_override or declared)
-    findings = model_lint.lint(lint_text, lint_model)
+    findings = model_lint.lint(lint_text, lint_model, kind=kind, effort=effort_override)
     penalty = model_lint.total_penalty(findings)
 
     scored = {name: value for name, value in dims.items() if not name.startswith("_")}

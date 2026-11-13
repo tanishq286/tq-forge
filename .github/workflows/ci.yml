@@ -42,6 +42,7 @@ jobs:
           node --check bin/postinstall.js
           node bin/cli.js --version
           node bin/cli.js sync-models --offline --root .
+          node bin/cli.js compat --check
           npm pack --dry-run
 
       - name: Run automated test suite & scorer benchmarks

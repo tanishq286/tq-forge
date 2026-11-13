@@ -1,6 +1,6 @@
 {
-  "schema": 1,
-  "updated": "2026-11-11",
+  "schema": 2,
+  "updated": "2026-11-13",
   "source": "seed",
   "pricing_note": "USD per million tokens at Anthropic first-party API rates, as published on 2026-11-03. Other platforms price separately. Check the pricing page before budgeting.",
   "cache": {
@@ -12,61 +12,431 @@
     "subagent": "claude-haiku-5-5"
   },
   "families": {
-    "fable": {"role": "orchestrator", "effort": "high", "current": "claude-fable-5-2"},
-    "mythos": {"role": "orchestrator", "effort": "high", "current": "claude-mythos-5-2", "restricted": true},
-    "opus": {"role": "daily-driver", "effort": "medium", "current": "claude-opus-5-5"},
-    "sonnet": {"role": "daily-driver", "effort": "medium", "current": "claude-sonnet-5-5"},
-    "haiku": {"role": "fast-worker", "effort": "medium", "current": "claude-haiku-5-5"}
+    "fable": {
+      "role": "orchestrator",
+      "effort": "high",
+      "current": "claude-fable-5-2"
+    },
+    "mythos": {
+      "role": "orchestrator",
+      "effort": "high",
+      "current": "claude-mythos-5-2",
+      "restricted": true
+    },
+    "opus": {
+      "role": "daily-driver",
+      "effort": "medium",
+      "current": "claude-opus-5-5"
+    },
+    "sonnet": {
+      "role": "daily-driver",
+      "effort": "medium",
+      "current": "claude-sonnet-5-5"
+    },
+    "haiku": {
+      "role": "fast-worker",
+      "effort": "medium",
+      "current": "claude-haiku-5-5"
+    }
   },
+  "effort_guide_note": "api_default is what the API runs when effort is omitted. routine is for chat and short, well-specified tasks; agentic is the starting level for multistep coding and tool use; hardest is worth its cost only where a gain was measured on your own tasks. stops_early_at lists the levels at which the model is documented to end a long task early, so a long-horizon prompt needs explicit completion instructions there.",
   "prompting_rules": {
-    "effort-not-budget": "Set reasoning depth with `effort`. A fixed thinking-token budget (budget_tokens) is rejected.",
+    "effort-not-budget": "Use adaptive thinking and set depth with `output_config.effort`. `thinking: {type: \"enabled\", budget_tokens: N}` is rejected.",
+    "thinking-always-on": "`thinking: {type: \"disabled\"}` is rejected. Lower `effort` instead; Sonnet 5.5 accepts `{type: \"between_tools\"}` at `high` or below.",
+    "no-sampling-params": "Omit temperature, top_p and top_k. Fable, Mythos and Opus reject any value; Sonnet 5.5 and Haiku 5.5 reject every non-default value.",
+    "no-reasoning-in-reply": "Do not ask for raw reasoning or chain of thought in the reply text: the request can be declined with the `reasoning_extraction` refusal category. Read `display: \"summarized\"` thinking blocks instead.",
+    "finish-the-task": "The model can end a long task early at the effort levels in `stops_early_at`. Give a long-horizon agent explicit completion instructions (a `# Finishing work` block).",
     "append-only-history": "Keep the conversation append-only and pass thinking blocks back unchanged. Editing or dropping earlier turns invalidates preserved thinking.",
-    "thinking-always-on": "Thinking cannot be disabled. Lower `effort` instead.",
     "no-forced-tool-choice": "tool_choice `any` and `tool` are rejected. Use `auto` and name the tool in the prompt.",
-    "no-prefill": "Assistant-turn prefill is rejected. Describe the format or use structured outputs.",
-    "no-sampling-params": "temperature, top_p and top_k are rejected. Remove them from request examples."
+    "no-prefill": "Assistant-turn prefill is rejected. Describe the format or use structured outputs."
   },
+  "deprecations_note": "Claude API dates; Amazon Bedrock and Vertex AI set their own schedules. A family rule covers every id of that version (dated snapshots and `-latest` included) and is replaced by the family's current model. An older version that is not listed is `superseded`: still served, but behind.",
+  "deprecations": [
+    {
+      "family": "sonnet",
+      "version": [
+        4,
+        5
+      ],
+      "status": "deprecated",
+      "date": "2026-11-30"
+    },
+    {
+      "id": "claude-mythos-preview",
+      "status": "deprecated",
+      "date": null,
+      "replacement": "claude-fable-5-2",
+      "note": "claude-mythos-5-2 for verified organizations"
+    },
+    {
+      "family": "opus",
+      "version": [
+        4,
+        1
+      ],
+      "status": "retired",
+      "date": "2026-08-05"
+    },
+    {
+      "family": "opus",
+      "version": [
+        4,
+        0
+      ],
+      "status": "retired",
+      "date": "2026-06-15"
+    },
+    {
+      "family": "sonnet",
+      "version": [
+        4,
+        0
+      ],
+      "status": "retired",
+      "date": "2026-06-15"
+    },
+    {
+      "family": "haiku",
+      "version": [
+        3,
+        0
+      ],
+      "status": "retired",
+      "date": "2026-04-20"
+    },
+    {
+      "family": "sonnet",
+      "version": [
+        3,
+        7
+      ],
+      "status": "retired",
+      "date": "2026-02-19"
+    },
+    {
+      "family": "haiku",
+      "version": [
+        3,
+        5
+      ],
+      "status": "retired",
+      "date": "2026-02-19"
+    },
+    {
+      "family": "opus",
+      "version": [
+        3,
+        0
+      ],
+      "status": "retired",
+      "date": "2026-01-05"
+    },
+    {
+      "family": "sonnet",
+      "version": [
+        3,
+        5
+      ],
+      "status": "retired",
+      "date": "2025-10-28"
+    },
+    {
+      "family": "sonnet",
+      "version": [
+        3,
+        0
+      ],
+      "status": "retired",
+      "date": "2025-07-21"
+    },
+    {
+      "id": "claude-2.1",
+      "status": "retired",
+      "date": "2025-07-21",
+      "replacement": "claude-opus-5-5"
+    },
+    {
+      "id": "claude-2.0",
+      "status": "retired",
+      "date": "2025-07-21",
+      "replacement": "claude-opus-5-5"
+    }
+  ],
   "models": {
     "claude-fable-5-2": {
       "family": "fable",
-      "version": [5, 2],
+      "version": [
+        5,
+        2
+      ],
       "role": "orchestrator",
       "effort": "high",
-      "pricing": {"input": 8.0, "output": 40.0, "cache_read": 0.2},
-      "prompting": ["effort-not-budget", "append-only-history", "thinking-always-on", "no-forced-tool-choice", "no-prefill", "no-sampling-params"]
+      "effort_guide": {
+        "api_default": "high",
+        "routine": "medium",
+        "agentic": "high",
+        "hardest": "xhigh",
+        "stops_early_at": [
+          "low",
+          "medium"
+        ]
+      },
+      "capabilities": {
+        "context_window": 1000000,
+        "max_output": 128000,
+        "thinking": "always-on",
+        "thinking_off": null,
+        "sampling": "rejected",
+        "forced_tool_choice": false,
+        "refusal_categories": [
+          "cyber",
+          "bio",
+          "frontier_llm",
+          "reasoning_extraction",
+          "general_harms"
+        ],
+        "prefill": false,
+        "effort_levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      "pricing": {
+        "input": 8.0,
+        "output": 40.0,
+        "cache_read": 0.2
+      },
+      "prompting": [
+        "effort-not-budget",
+        "thinking-always-on",
+        "no-sampling-params",
+        "no-reasoning-in-reply",
+        "finish-the-task",
+        "append-only-history",
+        "no-forced-tool-choice",
+        "no-prefill"
+      ]
     },
     "claude-mythos-5-2": {
       "family": "mythos",
-      "version": [5, 2],
+      "version": [
+        5,
+        2
+      ],
       "role": "orchestrator",
       "effort": "high",
       "restricted": true,
-      "pricing": {"input": 8.0, "output": 40.0, "cache_read": 0.2},
-      "prompting": ["effort-not-budget", "append-only-history", "thinking-always-on", "no-forced-tool-choice", "no-prefill", "no-sampling-params"]
+      "effort_guide": {
+        "api_default": "high",
+        "routine": "medium",
+        "agentic": "high",
+        "hardest": "xhigh",
+        "stops_early_at": [
+          "low",
+          "medium"
+        ]
+      },
+      "capabilities": {
+        "context_window": 1000000,
+        "max_output": 128000,
+        "thinking": "always-on",
+        "thinking_off": null,
+        "sampling": "rejected",
+        "forced_tool_choice": false,
+        "refusal_categories": [
+          "cyber",
+          "bio",
+          "frontier_llm",
+          "reasoning_extraction",
+          "general_harms"
+        ],
+        "prefill": false,
+        "effort_levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      "pricing": {
+        "input": 8.0,
+        "output": 40.0,
+        "cache_read": 0.2
+      },
+      "prompting": [
+        "effort-not-budget",
+        "thinking-always-on",
+        "no-sampling-params",
+        "no-reasoning-in-reply",
+        "finish-the-task",
+        "append-only-history",
+        "no-forced-tool-choice",
+        "no-prefill"
+      ]
     },
     "claude-opus-5-5": {
       "family": "opus",
-      "version": [5, 5],
+      "version": [
+        5,
+        5
+      ],
       "role": "daily-driver",
       "effort": "medium",
-      "pricing": {"input": 4.0, "output": 20.0, "cache_read": 0.2},
-      "prompting": ["effort-not-budget", "append-only-history", "thinking-always-on", "no-forced-tool-choice", "no-prefill", "no-sampling-params"]
+      "effort_guide": {
+        "api_default": "medium",
+        "routine": "low",
+        "agentic": "medium",
+        "hardest": "xhigh",
+        "stops_early_at": []
+      },
+      "capabilities": {
+        "context_window": 1000000,
+        "max_output": 128000,
+        "thinking": "always-on",
+        "thinking_off": null,
+        "sampling": "rejected",
+        "forced_tool_choice": false,
+        "refusal_categories": [
+          "cyber",
+          "bio",
+          "reasoning_extraction"
+        ],
+        "prefill": false,
+        "effort_levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      "pricing": {
+        "input": 4.0,
+        "output": 20.0,
+        "cache_read": 0.2
+      },
+      "prompting": [
+        "effort-not-budget",
+        "thinking-always-on",
+        "no-sampling-params",
+        "no-reasoning-in-reply",
+        "append-only-history",
+        "no-forced-tool-choice",
+        "no-prefill"
+      ]
     },
     "claude-sonnet-5-5": {
       "family": "sonnet",
-      "version": [5, 5],
+      "version": [
+        5,
+        5
+      ],
       "role": "daily-driver",
       "effort": "medium",
-      "pricing": {"input": 2.0, "output": 10.0, "cache_read": 0.1},
-      "prompting": ["effort-not-budget", "append-only-history", "thinking-always-on", "no-forced-tool-choice", "no-prefill", "no-sampling-params"]
+      "effort_guide": {
+        "api_default": "high",
+        "routine": "low",
+        "agentic": "medium",
+        "hardest": "xhigh",
+        "stops_early_at": [
+          "low"
+        ]
+      },
+      "capabilities": {
+        "context_window": 1000000,
+        "max_output": 128000,
+        "thinking": "adaptive",
+        "thinking_off": "between_tools",
+        "sampling": "default-only",
+        "forced_tool_choice": false,
+        "refusal_categories": [
+          "cyber",
+          "bio",
+          "frontier_llm",
+          "reasoning_extraction",
+          "general_harms"
+        ],
+        "prefill": false,
+        "effort_levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      "pricing": {
+        "input": 2.0,
+        "output": 10.0,
+        "cache_read": 0.1
+      },
+      "prompting": [
+        "effort-not-budget",
+        "thinking-always-on",
+        "no-sampling-params",
+        "no-reasoning-in-reply",
+        "finish-the-task",
+        "append-only-history",
+        "no-forced-tool-choice",
+        "no-prefill"
+      ]
     },
     "claude-haiku-5-5": {
       "family": "haiku",
-      "version": [5, 5],
+      "version": [
+        5,
+        5
+      ],
       "role": "fast-worker",
       "effort": "medium",
-      "pricing": {"input": 0.1, "output": 0.5, "cache_read": null, "note": "prompts up to 100K tokens; 0.50 / 2.50 beyond"},
-      "prompting": ["effort-not-budget", "append-only-history", "no-prefill", "no-sampling-params"]
+      "effort_guide": {
+        "api_default": "medium",
+        "routine": "low",
+        "agentic": "medium",
+        "hardest": "high",
+        "stops_early_at": [
+          "low"
+        ]
+      },
+      "capabilities": {
+        "context_window": 1000000,
+        "max_output": 128000,
+        "thinking": "adaptive",
+        "thinking_off": "disabled",
+        "sampling": "default-only",
+        "forced_tool_choice": true,
+        "refusal_categories": [
+          "cyber",
+          "bio",
+          "frontier_llm",
+          "general_harms"
+        ],
+        "prefill": false,
+        "effort_levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      "pricing": {
+        "input": 0.1,
+        "output": 0.5,
+        "cache_read": null,
+        "note": "prompts up to 100K tokens; 0.50 / 2.50 beyond"
+      },
+      "prompting": [
+        "effort-not-budget",
+        "no-sampling-params",
+        "finish-the-task",
+        "append-only-history",
+        "no-prefill"
+      ]
     }
   }
 }

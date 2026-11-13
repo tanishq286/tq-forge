@@ -26,3 +26,5 @@ __pycache__/
 
 # Local drafts (never commit)
 OSS_APPLICATION_DRAFT.md
+.claude/HANDOFF.md
+.claude/settings.local.json

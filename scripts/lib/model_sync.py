@@ -67,28 +67,14 @@ PER_MILLION = 1_000_000
 SOURCES = ("auto", "anthropic", "openrouter", "offline")
 STAMP = "model-sync.json"
 
-_CURRENT = re.compile(r"^claude-(fable|mythos|opus|sonnet|haiku)-(\d{1,2})(?:-(\d{1,2}))?(?:-\d{8})?$")
-_LEGACY = re.compile(r"^claude-(\d{1,2})(?:-(\d{1,2}))?-(opus|sonnet|haiku)(?:-\d{8})?$")
 _MODEL_LINE = re.compile(r"^(model[ \t]*:[ \t]*)([\"']?)([^\s\"'#]+)\2([ \t]*(?:#[^\r\n]*)?\r?)$", re.M)
 
 
 # ------------------------------------------------------------------ ids
 
 def parse(model_id):
-    """Return (family, (major, minor)) for a Claude model id, or None.
-
-    Accepts current ids (claude-opus-5-5), dated snapshots, the older
-    version-first form (claude-3-5-sonnet-20241022), and provider spellings
-    such as anthropic/claude-opus-5.5 or claude-opus-4-5@20251101.
-    """
-    text = str(model_id or "").strip().lower().split("/")[-1].split(":")[0].split("@")[0].replace(".", "-")
-    match = _CURRENT.match(text)
-    if match:
-        return match.group(1), (int(match.group(2)), int(match.group(3) or 0))
-    match = _LEGACY.match(text)
-    if match:
-        return match.group(3), (int(match.group(1)), int(match.group(2) or 0))
-    return None
+    """Return (family, (major, minor)) for a Claude model id, or None. See `models.parse_id`."""
+    return models.parse_id(model_id)
 
 
 def canonical(family, version):
@@ -115,10 +101,18 @@ def _version_of(registry, model_id):
 
 
 def upgrade_target(model_id, registry):
-    """The family's current model when `model_id` is an older version of it, else None."""
+    """The model a pinned id should move to, or None when it is current, newer or unknown.
+
+    An older version of a family moves to that family's current model. An id
+    the registry lists as retired by name (claude-2.1) moves to its listed
+    replacement, because a request to it already fails. A deprecated id with
+    more than one sensible successor (claude-mythos-preview) is left for a
+    person to decide; the lint reports it.
+    """
     parsed = parse(model_id)
     if not parsed:
-        return None
+        found = models.status(model_id, registry) if model_id else {"status": "unknown"}
+        return found.get("replacement") if found["status"] == "retired" else None
     family, version = parsed
     current = current_id(registry, family)
     if not current or version >= _version_of(registry, current):

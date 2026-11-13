@@ -186,7 +186,7 @@ class McpIsolationTest(ProjectCase):
             path = self.root / ".claude" / "agents" / f"mcp-{name}.md"
             text = path.read_text()
             fields, _, _ = frontmatter.read(text)
-            self.assertEqual(fields["model"], "claude-haiku-5-5")
+            self.assertEqual(fields["model"], HAIKU)
             self.assertIn(f"  - {name}:", text)
             self.assertIn("Bearer ${" + name.upper() + "_TOKEN}", text)
             checks = drytest.Checks()
@@ -407,7 +407,7 @@ class ShieldTest(ProjectCase):
         for name in optimize.SOAKERS:
             path = self.root / ".claude" / "agents" / f"{name}.md"
             fields, body, _ = frontmatter.read(path.read_text())
-            self.assertEqual(fields["model"], "claude-haiku-5-5")
+            self.assertEqual(fields["model"], HAIKU)
             self.assertIn("15 lines or fewer", body)
             checks = drytest.Checks()
             drytest.check_subagent(path, checks)
@@ -436,7 +436,7 @@ class ShieldTest(ProjectCase):
         report = self._shield(strict=True, model="haiku")
         settings = self._settings()
         self.assertIn("Read(./package-lock.json)", settings["permissions"]["deny"])
-        self.assertEqual(settings["env"], {"CLAUDE_CODE_SUBAGENT_MODEL": "claude-haiku-5-5"})
+        self.assertEqual(settings["env"], {"CLAUDE_CODE_SUBAGENT_MODEL": HAIKU})
         self.assertTrue(any("every subagent" in warning for warning in report["warnings"]))
 
     def test_effort_is_set_for_the_session_and_per_model(self):
@@ -449,7 +449,7 @@ class ShieldTest(ProjectCase):
         self.assertEqual(settings["effortLevel"], "medium")
         self.assertEqual(settings["modelSettings"]["claude-fable-5-2"],
                          {"effortLevel": "medium", "autoCompactWindow": 200000})
-        self.assertEqual(settings["modelSettings"]["claude-opus-5-5"], {"effortLevel": "medium"})
+        self.assertEqual(settings["modelSettings"][OPUS], {"effortLevel": "medium"})
         self.assertEqual(settings["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "claude-sonnet-5-5", "an existing choice wins")
         with self.assertRaises(scaffold.ScaffoldError):
             optimize.plan_shield(self.root, False, None, effort="max")
@@ -834,8 +834,27 @@ class PluginTest(ProjectCase):
                          {"same": "off"})
 
 
-NEW_MODELS = ["claude-fable-5-3", "anthropic/claude-haiku-6", "claude-opus-5-5", "claude-sonnet-4-6",
-              "claude-3-5-sonnet-20241022", "gpt-9", "claude-opus-9-1"]
+# Model ids are named relative to the bundled registry, so these tests still hold on the
+# pull request that the weekly model sync opens after a new Claude model is released.
+REGISTRY = json.loads((ROOT / "config" / "models.json").read_text(encoding="utf-8"))
+
+
+def current(family):
+    return REGISTRY["families"][family]["current"]
+
+
+def bumped(family, major=0, minor=0):
+    """The id `major` and `minor` versions ahead of the family's current model."""
+    have_major, have_minor = model_sync.parse(current(family))[1]
+    version = (have_major + major, 0 + minor) if major else (have_major, have_minor + minor)
+    return model_sync.canonical(family, version)
+
+
+FABLE, OPUS, SONNET, HAIKU = (current(family) for family in ("fable", "opus", "sonnet", "haiku"))
+NEXT_FABLE, NEXT_OPUS, NEXT_HAIKU = bumped("fable", minor=1), bumped("opus", minor=1), bumped("haiku", major=1)
+FAR_OPUS = bumped("opus", major=4, minor=1)
+NEW_MODELS = [NEXT_FABLE, NEXT_HAIKU.replace("claude-", "anthropic/claude-", 1), OPUS, "claude-sonnet-4-6",
+              "claude-3-5-sonnet-20241022", "gpt-9", FAR_OPUS]
 
 
 class ModelSyncTest(ProjectCase):
@@ -872,35 +891,36 @@ class ModelSyncTest(ProjectCase):
         self.assertEqual(model_sync.label("fable", (5, 3)), "Claude Fable 5.3")
 
     def test_registry_lists_the_five_current_models_with_roles_and_prices(self):
-        expected = {"fable": ("claude-fable-5-2", "orchestrator"), "mythos": ("claude-mythos-5-2", "orchestrator"),
-                    "opus": ("claude-opus-5-5", "daily-driver"), "sonnet": ("claude-sonnet-5-5", "daily-driver"),
-                    "haiku": ("claude-haiku-5-5", "fast-worker")}
-        for family, (model_id, role) in expected.items():
+        roles = {"fable": "orchestrator", "mythos": "orchestrator", "opus": "daily-driver",
+                 "sonnet": "daily-driver", "haiku": "fast-worker"}
+        for family, role in roles.items():
+            model_id = self.registry["families"][family]["current"]
             entry = self.registry["models"][model_id]
-            self.assertEqual(self.registry["families"][family]["current"], model_id)
+            self.assertEqual(model_sync.parse(model_id), (family, tuple(entry["version"])))
             self.assertEqual(entry["role"], role)
             self.assertIn(entry["effort"], ("low", "medium", "high", "xhigh"))
             self.assertGreater(entry["pricing"]["output"], entry["pricing"]["input"])
             self.assertIn("append-only-history", entry["prompting"])
             self.assertTrue(set(entry["prompting"]) <= set(self.registry["prompting_rules"]))
-        self.assertEqual(self.registry["pair"], {"lead": "claude-fable-5-2", "subagent": "claude-haiku-5-5"})
+        self.assertEqual(self.registry["pair"], {"lead": FABLE, "subagent": HAIKU})
 
     def test_newer_models_are_added_and_older_or_wild_ids_are_ignored(self):
         updated, upgrades, notes = model_sync.plan_registry(self.registry, self._found(), today="2027-01-02")
-        self.assertEqual(upgrades, {"claude-fable-5-2": "claude-fable-5-3", "claude-haiku-5-5": "claude-haiku-6"})
-        self.assertEqual(updated["pair"], {"lead": "claude-fable-5-3", "subagent": "claude-haiku-6"})
+        self.assertEqual(upgrades, {FABLE: NEXT_FABLE, HAIKU: NEXT_HAIKU})
+        self.assertEqual(updated["pair"], {"lead": NEXT_FABLE, "subagent": NEXT_HAIKU})
         self.assertEqual(updated["updated"], "2027-01-02")
-        added = updated["models"]["claude-fable-5-3"]
-        self.assertEqual((added["role"], added["effort"], added["version"]), ("orchestrator", "high", [5, 3]))
-        self.assertEqual(added["prompting"], self.registry["models"]["claude-fable-5-2"]["prompting"])
-        self.assertEqual(added["pricing"]["inherited_from"], "claude-fable-5-2")
-        self.assertEqual(updated["models"]["claude-fable-5-2"]["superseded_by"], "claude-fable-5-3")
-        self.assertEqual(updated["families"]["opus"]["current"], "claude-opus-5-5")
-        self.assertTrue(any("claude-opus-9-1" in note and "ignored" in note for note in notes))
-        self.assertEqual(self.registry["families"]["fable"]["current"], "claude-fable-5-2", "input is not mutated")
+        added = updated["models"][NEXT_FABLE]
+        self.assertEqual((added["role"], added["effort"], added["version"]),
+                         ("orchestrator", "high", list(model_sync.parse(NEXT_FABLE)[1])))
+        self.assertEqual(added["prompting"], self.registry["models"][FABLE]["prompting"])
+        self.assertEqual(added["pricing"]["inherited_from"], FABLE)
+        self.assertEqual(updated["models"][FABLE]["superseded_by"], NEXT_FABLE)
+        self.assertEqual(updated["families"]["opus"]["current"], OPUS)
+        self.assertTrue(any(FAR_OPUS in note and "ignored" in note for note in notes))
+        self.assertEqual(self.registry["families"]["fable"]["current"], FABLE, "input is not mutated")
 
     def test_offline_and_current_lists_change_nothing(self):
-        for found in ({}, self._found(["claude-fable-5-2", "claude-haiku-5-5", "claude-opus-4-8"])):
+        for found in ({}, self._found([FABLE, HAIKU, "claude-opus-4-8"])):
             updated, upgrades, _ = model_sync.plan_registry(self.registry, found)
             self.assertEqual((updated, upgrades), (self.registry, {}))
 
@@ -939,9 +959,11 @@ class ModelSyncTest(ProjectCase):
         self.assertEqual(model_sync.discover("offline", {}, broken), {"source": "offline", "models": {}, "errors": []})
 
     def test_implausible_ids_and_malformed_responses_change_nothing(self):
-        found = self._found(["claude-opus-5-99", "claude-opus-5-6", "claude-sonnet-7", "claude-haiku-6-9"])
+        too_far = model_sync.MAX_MINOR_JUMP + 1
+        found = self._found([bumped("opus", minor=too_far), NEXT_OPUS, bumped("sonnet", major=2),
+                             bumped("haiku", major=1, minor=too_far)])
         updated, upgrades, notes = model_sync.plan_registry(self.registry, found)
-        self.assertEqual(upgrades, {"claude-opus-5-5": "claude-opus-5-6"}, "a plausible id is not blocked by a wild one")
+        self.assertEqual(upgrades, {OPUS: NEXT_OPUS}, "a plausible id is not blocked by a wild one")
         self.assertEqual(sum("ignored" in note for note in notes), 3)
         for body in ({"data": None}, {"data": 5}, {"data": ["x", {"id": 7}]}, [], "text"):
             result = model_sync.discover("openrouter", {}, lambda url, headers=None, body=body: body)
@@ -956,7 +978,7 @@ class ModelSyncTest(ProjectCase):
         report = model_sync.sync(project, self._found(), "openrouter", apply=True, package=package, trusted=False)
         self.assertEqual((tree_digest(package), tree_digest(project)), before)
         self.assertEqual(report["upgrades"], {})
-        self.assertEqual(report["pending"], {"claude-fable-5-2": "claude-fable-5-3", "claude-haiku-5-5": "claude-haiku-6"})
+        self.assertEqual(report["pending"], {FABLE: NEXT_FABLE, HAIKU: NEXT_HAIKU})
         self.assertTrue(all("unverified" in note for note in report["notes"][:2]))
         self.assertIn("seen, not applied", model_sync.render(report))
         self.assertFalse((self.root / "state" / model_sync.STAMP).exists())
@@ -970,30 +992,30 @@ class ModelSyncTest(ProjectCase):
     def test_two_old_model_settings_never_collapse_into_one(self):
         settings = {"modelSettings": {"claude-opus-4-1": {"effortLevel": "low"}, "claude-opus-4-5": {"effortLevel": "high"}}}
         upgraded, notes = model_sync._upgrade_settings(settings, self.registry)
-        self.assertEqual(upgraded["modelSettings"], {"claude-opus-5-5": {"effortLevel": "low"},
+        self.assertEqual(upgraded["modelSettings"], {OPUS: {"effortLevel": "low"},
                                                      "claude-opus-4-5": {"effortLevel": "high"}})
         self.assertEqual(len(notes), 1)
 
     def test_crlf_frontmatter_is_upgraded(self):
         text = "---\r\nname: a\r\nmodel: claude-opus-4-8\r\n---\r\n\r\nBody.\r\n"
         upgraded, change = model_sync.rewrite_model_field(text, self.registry)
-        self.assertEqual(change, ("claude-opus-4-8", "claude-opus-5-5"))
-        self.assertEqual(upgraded, text.replace("claude-opus-4-8", "claude-opus-5-5"), "line endings are kept")
+        self.assertEqual(change, ("claude-opus-4-8", OPUS))
+        self.assertEqual(upgraded, text.replace("claude-opus-4-8", OPUS), "line endings are kept")
 
     def test_live_prices_replace_inherited_ones(self):
-        found = {"claude-opus-5-6": {"pricing": {"input": 3.0, "output": 15.0, "cache_read": 0.15, "source": "openrouter"}}}
+        found = {NEXT_OPUS: {"pricing": {"input": 3.0, "output": 15.0, "cache_read": 0.15, "source": "openrouter"}}}
         updated, _, notes = model_sync.plan_registry(self.registry, found)
-        self.assertEqual(updated["models"]["claude-opus-5-6"]["pricing"]["input"], 3.0)
-        self.assertNotIn("inherited_from", updated["models"]["claude-opus-5-6"]["pricing"])
+        self.assertEqual(updated["models"][NEXT_OPUS]["pricing"]["input"], 3.0)
+        self.assertNotIn("inherited_from", updated["models"][NEXT_OPUS]["pricing"])
         self.assertFalse(any("check them" in note for note in notes))
 
     def test_pinned_ids_are_upgraded_and_aliases_are_left_alone(self):
         text = "---\nname: a\nmodel: \"claude-3-5-sonnet-20241022\"  # pinned\neffort: low\n---\n\nmodel: claude-opus-4-1\n"
         upgraded, change = model_sync.rewrite_model_field(text, self.registry)
-        self.assertEqual(change, ("claude-3-5-sonnet-20241022", "claude-sonnet-5-5"))
-        self.assertIn('model: "claude-sonnet-5-5"  # pinned', upgraded)
+        self.assertEqual(change, ("claude-3-5-sonnet-20241022", SONNET))
+        self.assertIn(f'model: "{SONNET}"  # pinned', upgraded)
         self.assertIn("\nmodel: claude-opus-4-1\n", upgraded, "the body is not rewritten")
-        for value in ("opus", "inherit", "claude-opus-5-5", "gpt-5"):
+        for value in ("opus", "inherit", OPUS, "gpt-5"):
             same = f"---\nname: a\nmodel: {value}\n---\n\nBody.\n"
             self.assertEqual(model_sync.rewrite_model_field(same, self.registry), (same, None))
         self.assertEqual(model_sync.rewrite_model_field("no frontmatter", self.registry), ("no frontmatter", None))
@@ -1008,12 +1030,12 @@ class ModelSyncTest(ProjectCase):
         project = self.root / "project"
         (project / ".claude" / "agents" / "team").mkdir(parents=True)
         (project / ".claude" / "agents" / "team" / "lead.md").write_text(
-            "---\nname: lead\ndescription: Leads. Use when asked.\nmodel: claude-fable-5-2\n---\n\nLead the work.\n")
+            f"---\nname: lead\ndescription: Leads. Use when asked.\nmodel: {FABLE}\n---\n\nLead the work.\n")
         (project / ".claude" / "agents" / "alias.md").write_text(
             "---\nname: alias\ndescription: Works. Use when asked.\nmodel: haiku\n---\n\nDo the work.\n")
         (project / ".claude" / "settings.json").write_text(json.dumps({
-            "model": "claude-fable-5-2", "theme": "dark", "env": {"CLAUDE_CODE_SUBAGENT_MODEL": "claude-haiku-5-5"},
-            "modelSettings": {"claude-fable-5-2": {"effortLevel": "high"}}}))
+            "model": FABLE, "theme": "dark", "env": {"CLAUDE_CODE_SUBAGENT_MODEL": HAIKU},
+            "modelSettings": {FABLE: {"effortLevel": "high"}}}))
         return project
 
     def test_sync_dry_run_writes_nothing_and_apply_updates_registry_templates_and_project(self):
@@ -1026,25 +1048,25 @@ class ModelSyncTest(ProjectCase):
         self.assertFalse((self.root / "state").exists())
 
         report = model_sync.sync(project, self._found(), "test", apply=True, package=package)
-        self.assertEqual(report["upgrades"], {"claude-fable-5-2": "claude-fable-5-3", "claude-haiku-5-5": "claude-haiku-6"})
+        self.assertEqual(report["upgrades"], {FABLE: NEXT_FABLE, HAIKU: NEXT_HAIKU})
         registry = json.loads((package / "config" / "models.json").read_text())
-        self.assertEqual(registry["pair"], {"lead": "claude-fable-5-3", "subagent": "claude-haiku-6"})
+        self.assertEqual(registry["pair"], {"lead": NEXT_FABLE, "subagent": NEXT_HAIKU})
         profiles = json.loads((package / "templates" / "models.json").read_text())
-        self.assertEqual(profiles["default"], "claude-fable-5-3")
-        self.assertEqual(list(profiles["models"])[:2], ["claude-fable-5-3", "claude-fable-5-2"])
-        self.assertEqual(profiles["models"]["claude-fable-5-3"]["label"], "Claude Fable 5.3")
+        self.assertEqual(profiles["default"], NEXT_FABLE)
+        self.assertEqual(list(profiles["models"])[:2], [NEXT_FABLE, FABLE])
+        self.assertEqual(profiles["models"][NEXT_FABLE]["label"], model_sync.label(*model_sync.parse(NEXT_FABLE)))
         orchestrator = (package / "templates" / "agents" / "fable-5-2-orchestrator.md").read_text()
-        self.assertEqual(frontmatter.read(orchestrator)[0]["model"], "claude-fable-5-3")
+        self.assertEqual(frontmatter.read(orchestrator)[0]["model"], NEXT_FABLE)
         soaker = (package / "templates" / "agents" / "context-soaker.md").read_text()
-        self.assertEqual(frontmatter.read(soaker)[0]["model"], "claude-haiku-6")
+        self.assertEqual(frontmatter.read(soaker)[0]["model"], NEXT_HAIKU)
 
         lead = (project / ".claude" / "agents" / "team" / "lead.md").read_text()
-        self.assertEqual(frontmatter.read(lead)[0]["model"], "claude-fable-5-3")
+        self.assertEqual(frontmatter.read(lead)[0]["model"], NEXT_FABLE)
         self.assertIn("model: haiku", (project / ".claude" / "agents" / "alias.md").read_text())
         settings = json.loads((project / ".claude" / "settings.json").read_text())
-        self.assertEqual(settings["model"], "claude-fable-5-3")
-        self.assertEqual(settings["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "claude-haiku-6")
-        self.assertEqual(settings["modelSettings"], {"claude-fable-5-3": {"effortLevel": "high"}})
+        self.assertEqual(settings["model"], NEXT_FABLE)
+        self.assertEqual(settings["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], NEXT_HAIKU)
+        self.assertEqual(settings["modelSettings"], {NEXT_FABLE: {"effortLevel": "high"}})
         self.assertEqual(settings["theme"], "dark")
         stamp = json.loads((self.root / "state" / model_sync.STAMP).read_text())
         self.assertEqual(stamp["upgrades"], report["upgrades"])
@@ -1066,12 +1088,12 @@ class ModelSyncTest(ProjectCase):
         self.assertEqual(offline.returncode, 0, offline.stderr)
         self.assertEqual(json.loads(offline.stdout)["upgrades"], {})
         ids = self.root / "ids.json"
-        ids.write_text(json.dumps(["claude-fable-5-3"]))
+        ids.write_text(json.dumps([NEXT_FABLE]))
         listed = subprocess.run([*script, "--ids-file", str(ids)], capture_output=True, text=True)
         self.assertEqual(listed.returncode, 0, listed.stderr)
         report = json.loads(listed.stdout)
         self.assertEqual((report["mode"], report["source"]), ("dry-run", "ids-file"))
-        self.assertEqual(report["upgrades"], {"claude-fable-5-2": "claude-fable-5-3"})
+        self.assertEqual(report["upgrades"], {FABLE: NEXT_FABLE})
         self.assertEqual(report["package_files"], [])
         ids.write_text("{}")
         self.assertEqual(subprocess.run([*script, "--ids-file", str(ids)], capture_output=True).returncode, 1)
@@ -1276,7 +1298,7 @@ class AutoImproveTest(ProjectCase):
         self.assertFalse(any(key.endswith("sql/SKILL.md") for key in auto(self.root)["files"]), "paths are opt-in")
         report = auto(self.root, apply=True, add_paths=True)
         fields, _, _ = frontmatter.read((agents / "old.md").read_text())
-        self.assertEqual((fields["model"], fields["effort"]), ("claude-sonnet-5-5", "medium"))
+        self.assertEqual((fields["model"], fields["effort"]), (SONNET, "medium"))
         fields, _, _ = frontmatter.read((self.root / ".claude" / "skills" / "sql" / "SKILL.md").read_text())
         self.assertEqual(fields["paths"], ["**/*.sql"])
         graph = (self.root / ".claude" / "skills" / "graph" / "SKILL.md").read_text()
@@ -1287,7 +1309,7 @@ class AutoImproveTest(ProjectCase):
                          "name: x\ndescription: Formats *.sql files.\npaths: []")
         records = {record["path"]: record for record in report["scores"]["records"]}
         self.assertEqual(records[".claude/agents/old.md"]["fixes"],
-                         ["model: claude-3-5-sonnet-20241022 -> claude-sonnet-5-5", "effort: medium"])
+                         [f"model: claude-3-5-sonnet-20241022 -> {SONNET}", "effort: medium"])
         self.assertEqual(report["scores"]["below_before"], 3)
         self.assertTrue(any("still under 85" in item for item in report["recommendations"]))
         self.assertEqual(auto(self.root, apply=True, add_paths=True)["files"], [])
