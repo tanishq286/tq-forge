@@ -21,6 +21,7 @@ from unittest import mock
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts" / "lib"))
 
+import ccr_engine  # noqa: E402
 import mods  # noqa: E402
 import mods_install  # noqa: E402
 import optimize  # noqa: E402
@@ -86,7 +87,8 @@ class ModsCase(unittest.TestCase):
                             ("SAVINGS_FILE", self.state / "tq-forge-savings.json"),
                             ("TOGGLES_FILE", self.state / "tq-forge-mods.json"),
                             ("CLOCK_FILE", self.state / "tq-forge-cache-clock.json"),
-                            ("PAYLOAD_DIR", self.state / "tq-forge-payloads")):
+                            ("PAYLOAD_DIR", self.state / "tq-forge-payloads"),
+                            ("CCR_DIR", self.state / "tq-forge-ccr")):
             patcher = mock.patch.object(mods, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -124,7 +126,84 @@ class InputRouterTest(ModsCase):
             self.assertNotIn(gone, cleaned)
         self.assertIn("[base64 removed", mods.clean_text("log line " + blob, set()))
 
+    def _retrieve(self, shown, **options):
+        footer = shown.splitlines()[-1]
+        self.assertTrue(footer.startswith("[CCR-ID: "), footer)
+        return ccr_engine.retrieve_ccr(footer.split()[1], directory=mods.CCR_DIR, **options)
+
+    def test_large_json_payload_is_shown_as_schema_and_rows_and_stays_retrievable(self):
+        text = json.dumps(self._payload(300), indent=2)
+        data = {"tool_name": "mcp__github__list_issues", "tool_response": [{"type": "text", "text": text}]}
+        result = mods.handle_mcp_output(data, self.config())
+        shown = result["hookSpecificOutput"]["updatedToolOutput"][0]["text"]
+        table = json.loads(shown.splitlines()[0])
+        self.assertEqual(table["_schema"], ["id", "title", "user"])
+        self.assertEqual((len(table["_rows"]), table["_total_rows"], table["_elided_rows"]), (15, 300, 285))
+        self.assertLess(mods.tokens_of(shown), 500)
+        self.assertIn("Retrieve: npx tq-forge retrieve ", shown)
+        stored = self._retrieve(shown)
+        self.assertEqual(len(json.loads(stored)), 300, "every record is still there")
+        self.assertNotIn("avatar_url", stored)
+        self.assertIn('"title": "Issue 299: the importer drops rows"', self._retrieve(shown, search="issue 299"))
+        self.assertFalse(mods.PAYLOAD_DIR.exists(), "the CCR store replaces the parked file")
+        entry = self.totals("input-router")
+        self.assertEqual(entry["events"], 1)
+        self.assertGreater(entry["tokens"], 2000)
+        self.assertEqual(text, data["tool_response"][0]["text"], "the hook input is not mutated")
+
+    def test_large_log_payload_is_shaped_and_stays_retrievable(self):
+        log = "\n".join([*["2026-11-12 10:00:00 INFO worker heartbeat ok, queue depth 0, nothing to do"] * 400,
+                         "2026-11-12 10:00:01 ERROR job 17 failed: connection refused"])
+        result = mods.handle_mcp_output({"tool_name": "mcp__ci__job_log", "tool_response": log}, self.config())
+        shown = result["hookSpecificOutput"]["updatedToolOutput"]
+        self.assertEqual(shown.splitlines()[1:3], ["  ... [repeated 400 times]",
+                                                   "2026-11-12 10:00:01 ERROR job 17 failed: connection refused"])
+        self.assertEqual(self._retrieve(shown), log)
+        self.assertGreater(self.totals("input-router")["tokens"], 2000)
+
+    def test_large_text_that_is_neither_json_nor_a_log_is_still_parked(self):
+        prose = "\n".join(f"Paragraph {n}: the quarterly notes say nothing unusual happened." for n in range(400))
+        result = mods.handle_mcp_output({"tool_name": "mcp__docs__page", "tool_response": prose}, self.config())
+        self.assertIn("input-router: the full payload", result["hookSpecificOutput"]["updatedToolOutput"])
+        self.assertFalse(mods.CCR_DIR.exists())
+        self.assertEqual(len(list(mods.PAYLOAD_DIR.glob("*.txt"))), 1)
+
+    def test_json_that_stays_large_after_crushing_is_parked(self):
+        text = json.dumps({"report": "word " * 4000})
+        result = mods.handle_mcp_output({"tool_name": "mcp__docs__report", "tool_response": text}, self.config())
+        self.assertIn("input-router: the full payload", result["hookSpecificOutput"]["updatedToolOutput"])
+
+    def test_without_the_engine_beside_it_the_router_parks_as_before(self):
+        text = json.dumps(self._payload(300), indent=2)
+        with mock.patch.dict(sys.modules, {"ccr_engine": None}):
+            result = mods.handle_mcp_output({"tool_name": "mcp__github__list_issues", "tool_response": text}, self.config())
+        self.assertIn("input-router: the full payload", result["hookSpecificOutput"]["updatedToolOutput"])
+        self.assertFalse(mods.CCR_DIR.exists())
+
+    def test_large_source_file_read_is_routed_with_an_outline(self):
+        source = self.home / "service.py"
+        source.write_text("import os\n\n" + "\n\n".join(
+            f"def handler_{n}(request):\n" + "".join(f"    step_{line} = request.get('{line}')\n" for line in range(40))
+            + "    return request" for n in range(40)))
+        result = mods.handle_read({"tool_input": {"file_path": str(source)}}, self.config())
+        reason = result["hookSpecificOutput"]["permissionDecisionReason"]
+        self.assertIn("`input-reader` subagent (model: haiku)", reason)
+        self.assertIn("Outline of service.py", reason)
+        self.assertIn("L1: import os", reason)
+        self.assertIn("L3: def handler_0(request):  # body: lines 3-44 in CCR ", reason)
+        self.assertNotIn("step_3 = ", reason)
+        self.assertLess(len(reason), mods.OUTLINE_MAX_CHARS + 700)
+        self.assertEqual(self._retrieve(reason, lines="3:4"), "def handler_0(request):\n    step_0 = request.get('0')")
+        self._write_toggles({"input-router": {"ccr": False}})
+        plain = mods.handle_read({"tool_input": {"file_path": str(source)}}, self.config())
+        self.assertNotIn("Outline", plain["hookSpecificOutput"]["permissionDecisionReason"])
+
+    def _write_toggles(self, toggles):
+        mods.TOGGLES_FILE.parent.mkdir(parents=True, exist_ok=True)
+        mods.TOGGLES_FILE.write_text(json.dumps(toggles))
+
     def test_large_connector_payload_is_cleaned_parked_and_replaced_by_a_preview(self):
+        self._write_toggles({"input-router": {"ccr": False}})
         text = json.dumps(self._payload(300), indent=2)
         data = {"tool_name": "mcp__github__list_issues", "tool_response": [{"type": "text", "text": text}]}
         result = mods.handle_mcp_output(data, self.config())
@@ -526,6 +605,7 @@ class InstallTest(ModsCase):
         report = self._install()
         self.assertEqual(report["mode"], "dry-run")
         self.assertIn(".claude/hooks/tq-forge/mods.py", report["files"])
+        self.assertIn(".claude/hooks/tq-forge/ccr_engine.py", report["files"])
         self.assertEqual(self.settings.read_text(), before)
         self.assertFalse((self.root / ".claude" / "hooks").exists())
 
@@ -550,6 +630,10 @@ class InstallTest(ModsCase):
         self.assertEqual(settings["permissions"], self.EXISTING["permissions"], "nothing is pre-approved by default")
         self.assertEqual(settings["model"], "claude-fable-5-2")
         self.assertNotIn("effortLevel", settings)
+        engine = (self.root / ".claude" / "hooks" / "tq-forge" / "ccr_engine.py").read_text()
+        self.assertEqual([line for line in engine.splitlines() if line.startswith("CLI = ")],
+                         [f'CLI = "{mods_install.cli_command()} retrieve"'],
+                         "a CCR footer names the command that works on this machine")
         self.assertNotIn("CLAUDE_CODE_SUBAGENT_MODEL", json.dumps(settings))
         self.assertTrue(report["nothing_lost"]["ok"])
         applied = self.settings.read_text(encoding="utf-8")

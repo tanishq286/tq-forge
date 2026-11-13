@@ -4,6 +4,20 @@ All notable changes to `tq-forge` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] — 2026-11-13
+
+The input-router shows large output in a short form you can undo.
+
+### Added
+- **Reversible short forms in `input-router`** (`scripts/lib/ccr_engine.py`). MCP output that is still over the threshold after cleaning is stored whole under a 12-character CCR id and shown short: JSON as a schema, its first 15 rows and a row count; a log without colour codes, blank lines or repeated lines. A Read of a source file over 12,000 tokens is still routed, and the note now carries an outline of the file's definitions with their line numbers. Text that is neither JSON nor a log, and JSON that stays large, is parked behind a preview as before. `"ccr": false` under `input-router` in `~/.claude/tq-forge-mods.json` turns it off.
+- **`tq-forge retrieve <ccr_id> [--lines A:B] [--search KW]`** prints the full text behind a CCR id, a line range of it, or the lines containing a keyword. An id must match `^[a-f0-9]{12}$`; anything else exits 2 before a path is built. An unknown id exits 1.
+
+### Changed
+- `mods install` copies `ccr_engine.py` next to `mods.py` in `.claude/hooks/tq-forge/`. Without it the router parks and previews, so an older install keeps working. The installed copy's `[CCR-ID: ...]` line names the command that works on that machine (`node <path>/bin/cli.js retrieve` for a checkout or a global install, `npx tq-forge retrieve` otherwise), the same way the bundled skills do.
+
+### Notes
+- The CCR store is `~/.claude/tq-forge-ccr/`: owner-only files, deleted after a week, never sent anywhere.
+
 ## [1.2.0] — 2026-11-12
 
 Lossless by default, eight signal-driven mods, and `learn` / `scout`.

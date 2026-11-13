@@ -246,7 +246,7 @@ Read these three ways before quoting them:
 
 | Mod | Hook | What it does |
 | :--- | :--- | :--- |
-| `input-router` | `PreToolUse(Read)`, `PostToolUse(mcp__*)` | A data file over 2,000 tokens (source over 12,000) is handed to the `input-reader` subagent (`haiku`, or `sonnet` via `/switchboard`) or read in ranges. MCP output loses empty fields, base64 blobs and avatar URLs; what is still over the threshold is saved under `~/.claude/tq-forge-payloads/` and replaced by a preview |
+| `input-router` | `PreToolUse(Read)`, `PostToolUse(mcp__*)` | A data file over 2,000 tokens (source over 12,000) is handed to the `input-reader` subagent (`haiku`, or `sonnet` via `/switchboard`) or read in ranges. MCP output loses empty fields, base64 blobs and avatar URLs. What is still over the threshold is stored whole under a CCR id and shown short (JSON as a schema and its first rows, a log without repeats, a large source file as an outline); `tq-forge retrieve <id>` prints the original. Other large text is saved under `~/.claude/tq-forge-payloads/` and replaced by a preview |
 | `effort-optimizer` | `UserPromptSubmit` | Classifies the prompt and recommends `/effort low`, `medium`, `high` or `xhigh` when the current effort does not fit. A hook cannot change effort, so this is a one-line recommendation; it never suggests `max` |
 | `subagent-model-selector` | `PreToolUse(Agent)` | Easy jobs (read, summarize, search, run one test) go to `haiku`, normal jobs to `sonnet`, complex or high-risk jobs stay on the session model. An explicit model, a plugin agent, a pinned agent definition and the built-in agents are never overridden |
 | `cache-clock` | `Stop`, status line | Records each reply and shows how long the prompt cache stays warm: 60 minutes on a Claude subscription, 5 with an API key |
@@ -259,6 +259,7 @@ npx tq-forge mods install --root ~ --apply   # existing hooks and settings are k
 npx tq-forge mods status | savings
 npx tq-forge mods toggle input-router sonnet
 npx tq-forge keep-warm --ttl 55m
+npx tq-forge retrieve 0123456789ab --lines 40:80   # or --search ERROR; the id comes from a [CCR-ID: ...] line
 ```
 
 `--chain-statusline` appends the cache clock to a status line you already have. `--allow-autonomy` pre-approves `WebSearch`, `WebFetch`, `gh api` and the learn/scout commands; `gh api` can also write with your GitHub token, so the flag is never implied. `/savings` reads `~/.claude/tq-forge-savings.json`; its figures are estimates (characters ÷ 4, pixels ÷ 750, list prices).

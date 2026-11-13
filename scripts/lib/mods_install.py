@@ -3,6 +3,7 @@
 `mods install` plans one backed-up change, the same way `optimize` does:
 
   .claude/hooks/tq-forge/mods.py    the mod runtime (a copy of mods.py)
+  .claude/hooks/tq-forge/ccr_engine.py  the reversible store the input-router uses
   .claude/hooks/tq-forge/mods.json  its defaults
   .claude/skills/<name>/SKILL.md    /savings, /switchboard, /handoff, /keep-warm, /tq-forge-learn
   .claude/agents/<name>.md          input-reader and omni-scout (kept if they already exist)
@@ -121,6 +122,7 @@ def plan_install(root, allow_autonomy=False, chain_statusline=False):
         return context_cost.read_text(path).replace(GENERIC_CLI, command)
 
     plan["writes"][f"{HOOK_DIR}/mods.py"] = context_cost.read_text(HERE / "mods.py")
+    plan["writes"][f"{HOOK_DIR}/ccr_engine.py"] = bundled(HERE / "ccr_engine.py")  # its footer names the command
     plan["writes"][f"{HOOK_DIR}/mods.json"] = context_cost.read_text(PACKAGE / "config" / "mods.json")
     for name in SKILLS:
         plan["writes"][f".claude/skills/{name}/SKILL.md"] = bundled(PACKAGE / "skills" / name / "SKILL.md")

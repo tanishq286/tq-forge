@@ -239,6 +239,7 @@ ${c.bold('Mods')} ${c.dim('(signal-driven hooks; install is a dry run unless --a
   mods status | savings            What is on, and what each mod has saved
   mods toggle <mod> <on|off|haiku|sonnet>
   keep-warm     When the prompt cache goes cold ${c.dim('(--ttl 55m|4m, --wait)')}
+  retrieve <ccr_id>   The full text behind a CCR id ${c.dim('(--lines A:B, --search KW)')}
 
 ${c.bold('Learn')} ${c.dim('(sandbox only unless --apply)')}
   learn <url-or-query>   Turn a video, repository or page into a skill
@@ -290,8 +291,72 @@ function runScript(script, scriptArgs) {
   process.exit(result.status === null ? 1 : result.status);
 }
 
+const CCR_ID = /^[a-f0-9]{12}$/;
+const LINE_RANGE = /^\d+:\d+$/;
+const RETRIEVE_USAGE = 'Usage: tq-forge retrieve <ccr_id> [--lines A:B] [--search KW]';
+const EXIT_USAGE = 2;
+
+/**
+ * Parse `retrieve` arguments. Returns { id, lines, search } or { error }.
+ * @param {string[]} args
+ * @returns {{ id?: string, lines?: string, search?: string, error?: string }}
+ */
+function parseRetrieveArgs(args) {
+  const parsed = {};
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--lines' || arg === '--search') {
+      const value = args[++i];
+      if (value === undefined) return { error: `${arg} needs a value` };
+      parsed[arg.slice(2)] = value;
+    } else if (arg.startsWith('--lines=') || arg.startsWith('--search=')) {
+      const cut = arg.indexOf('=');
+      parsed[arg.slice(2, cut)] = arg.slice(cut + 1);
+    } else if (arg.startsWith('-')) {
+      return { error: `unknown option ${arg}` };
+    } else if (parsed.id !== undefined) {
+      return { error: 'only one CCR id is accepted' };
+    } else {
+      parsed.id = arg;
+    }
+  }
+  if (parsed.id === undefined) return { error: 'a CCR id is required' };
+  if (!CCR_ID.test(parsed.id)) return { error: 'a CCR id is 12 lowercase hex characters' };
+  if (parsed.lines !== undefined && !LINE_RANGE.test(parsed.lines)) {
+    return { error: '--lines takes START:END, for example 10:40' };
+  }
+  return parsed;
+}
+
+function retrieve(args) {
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log(`${RETRIEVE_USAGE}\n\nPrint the full text behind a CCR id that the input-router left in a tool result.`);
+    return;
+  }
+  const parsed = parseRetrieveArgs(args);
+  if (parsed.error) {
+    console.error(c.r(`retrieve: ${parsed.error}`));
+    console.error(RETRIEVE_USAGE);
+    process.exit(EXIT_USAGE);
+  }
+  // Validated values in an argument array: nothing the user typed reaches a shell or a file path.
+  const scriptArgs = [path.join(PKG_ROOT, 'scripts', 'lib', 'ccr_engine.py'), parsed.id];
+  if (parsed.lines !== undefined) scriptArgs.push('--lines', parsed.lines);
+  if (parsed.search !== undefined) scriptArgs.push(`--search=${parsed.search}`);
+  const result = spawnSync(have('python3') ? 'python3' : 'python', scriptArgs, {
+    stdio: 'inherit',
+    env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' },
+  });
+  if (result.error) {
+    console.error(c.r(`Could not run python3: ${result.error.message}`));
+    process.exit(1);
+  }
+  process.exit(result.status === null ? 1 : result.status);
+}
+
 function main() {
   const args = process.argv.slice(2);
+  if (args[0] === 'retrieve') return retrieve(args.slice(1));
   if (Object.prototype.hasOwnProperty.call(PASS_THROUGH, args[0])) {
     const [script, prefix] = PASS_THROUGH[args[0]];
     return runScript(script, [...prefix, ...args.slice(1)]);

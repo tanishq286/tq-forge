@@ -7,8 +7,12 @@ from what is actually happening, instead of a static global setting:
                            handed to the `input-reader` subagent, or read in ranges.
                            Reads made inside a subagent are never routed.
                            PostToolUse(mcp__*): connector output is cleaned of empty
-                           fields, base64 blobs and avatar URLs; what is still over the
-                           threshold is saved to a file and replaced by a preview.
+                           fields, base64 blobs and avatar URLs. What is still over the
+                           threshold is stored whole under a CCR id and shown short:
+                           JSON as a schema and its first rows, a log without repeats,
+                           a large source file as an outline of its definitions.
+                           `tq-forge retrieve <id>` prints the original. Anything else
+                           is saved to a file and replaced by a preview.
   effort-optimizer         UserPromptSubmit: classifies the prompt and tells you when
                            the current effort is higher or lower than it needs. Hooks
                            cannot change the session's effort, so this recommends.
@@ -21,8 +25,10 @@ from what is actually happening, instead of a static global setting:
                            from the transcript and tells you to run /handoff.
   efficient-browser-use    PostToolUse(mcp__*): halves screenshot dimensions.
 
-This one file is also what `mods install` copies to .claude/hooks/tq-forge/, so
-it imports nothing else from tq-forge at module level. A handler that fails
+This file is what `mods install` copies to .claude/hooks/tq-forge/, so it
+imports nothing else from tq-forge at module level. `ccr_engine.py` is copied
+beside it and imported on first use; without it the router parks and previews
+as before. A handler that fails
 prints nothing and exits 0: a mod must never block a session.
 
 Token and dollar figures are estimates (characters / 4, pixels / 750, list
@@ -51,6 +57,7 @@ SAVINGS_FILE = STATE / "tq-forge-savings.json"
 TOGGLES_FILE = STATE / "tq-forge-mods.json"
 CLOCK_FILE = STATE / "tq-forge-cache-clock.json"
 PAYLOAD_DIR = STATE / "tq-forge-payloads"
+CCR_DIR = STATE / "tq-forge-ccr"
 MODS = ("input-router", "effort-optimizer", "subagent-model-selector", "cache-clock", "handoff",
         "efficient-browser-use")
 READERS = ("haiku", "sonnet")
@@ -71,6 +78,12 @@ SKIP_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".i
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 BASE64_RUN = re.compile(r"(?:data:[\w/+.-]+;base64,)?[A-Za-z0-9+/]{200,}={0,2}")
 NOISE_KEY = re.compile(r"avatar|gravatar", re.I)
+LOG_LINE = re.compile(r"^\s*(?:\x1b\[[0-9;]*m)*(?:\[?\d{4}-\d\d-\d\d|\[?\d\d:\d\d:\d\d|\[?(?:ERROR|WARN(?:ING)?|INFO|DEBUG"
+                      r"|TRACE|FATAL)\b|npm (?:ERR!|WARN)|at \S+ \(|Traceback |File \")", re.I)
+MIN_LOG_LINES = 20
+LOG_LINE_SHARE = 0.3
+OUTLINE_MAX_BYTES = 2_000_000  # a larger source file gets no outline; the deny reason alone still routes it
+OUTLINE_MAX_CHARS = 4000
 COMPLEX = re.compile(r"\b(architect\w*|refactor\w*|redesign\w*|migrat\w+|root[- ]cause|debug\w*|race condition"
                      r"|deadlock|security (?:audit|review)|threat model|multi[- ]file|end[- ]to[- ]end"
                      r"|across (?:the )?(?:codebase|modules|files|repo)|investigat\w+|concurrency|distributed)\b", re.I)
@@ -84,7 +97,7 @@ EASY = re.compile(r"\b(read|summari[sz]e|list|find|search|grep|scrape|fetch|coll
                   r"|pull (?:the )?metrics|run (?:the |a )?(?:single )?tests?|check (?:if|whether))\b", re.I)
 DEFAULTS = {
     "input-router": {"enabled": True, "threshold_tokens": 2000, "source_threshold_tokens": 12000, "reader": "haiku",
-                     "preview_chars": 1200,
+                     "preview_chars": 1200, "ccr": True,
                      "drop_keys": ["avatar_url", "gravatar_id", "node_id", "_links", "etag", "tracking_id"]},
     "effort-optimizer": {"enabled": True},
     "subagent-model-selector": {"enabled": True, "auto_allow": False,
@@ -215,14 +228,70 @@ def _park_payload(text):
     return target
 
 
+def _ccr_engine(settings):
+    """The CCR engine when it is switched on and sits next to this file, else None."""
+    if not settings.get("ccr", True):
+        return None
+    try:
+        import ccr_engine
+    except ImportError:
+        return None
+    return ccr_engine
+
+
+def _looks_like_logs(text):
+    lines = [line for line in text.splitlines() if line.strip()]
+    return len(lines) >= MIN_LOG_LINES and sum(1 for line in lines if LOG_LINE.match(line)) >= len(lines) * LOG_LINE_SHARE
+
+
+def _ccr_shape(text, settings):
+    """A short, reversible form of a large payload (JSON or a log), or None when parking it is the better fit."""
+    engine = _ccr_engine(settings)
+    if engine is None:
+        return None
+    try:
+        if text.lstrip()[:1] in ("{", "["):
+            shaped = engine.smart_crush_json(_readable(text), directory=CCR_DIR)
+        elif _looks_like_logs(text):
+            shaped = engine.rtk_shape_logs(text, directory=CCR_DIR)
+        else:
+            return None
+    except Exception:  # noqa: BLE001 (fall back to the parked preview)
+        return None
+    fits = "[CCR-ID: " in shaped and tokens_of(shaped) <= settings["threshold_tokens"]
+    return shaped if fits else None
+
+
+def _source_outline(path, settings):
+    """The definitions of a large source file with their line numbers, for the note that routes the read."""
+    engine = _ccr_engine(settings)
+    try:
+        if engine is None or path.stat().st_size > OUTLINE_MAX_BYTES:
+            return ""
+        outline = engine.compress_code_ast(path.read_text(encoding="utf-8", errors="replace"), path.name,
+                                           directory=CCR_DIR)
+    except Exception:  # noqa: BLE001 (the read is still routed without an outline)
+        return ""
+    if "[CCR-ID: " not in outline:
+        return ""
+    if len(outline) > OUTLINE_MAX_CHARS:
+        body, _, footer = outline.rpartition("\n")
+        outline = f"{body[:OUTLINE_MAX_CHARS - len(footer)].rsplit(chr(10), 1)[0]}\n... [outline cut]\n{footer}"
+    return outline
+
+
 def _route_text(text, tool, config):
-    """Clean one text payload and, if still large, park it in a file behind a preview."""
+    """Clean one text payload and, if still large, show a reversible short form or park it behind a preview."""
     settings = config["input-router"]
     cleaned = clean_text(text, set(settings["drop_keys"]))
     saved = tokens_of(text) - tokens_of(cleaned)
     if saved < MIN_CLEAN_SAVING:
         cleaned, saved = text, 0
-    if tokens_of(cleaned) > settings["threshold_tokens"]:
+    shaped = _ccr_shape(cleaned, settings) if tokens_of(cleaned) > settings["threshold_tokens"] else None
+    if shaped is not None:
+        saved += tokens_of(cleaned) - tokens_of(shaped)
+        cleaned = shaped
+    elif tokens_of(cleaned) > settings["threshold_tokens"]:
         target = _park_payload(cleaned)
         preview = cleaned[:settings["preview_chars"]]
         note = (f"\n[input-router: the full payload ({tokens_of(cleaned):,} tokens) is saved at {target}. "
@@ -255,6 +324,9 @@ def handle_read(data, config):
               f"(model: {settings['reader']}) with the question you need answered, and ask for notes with "
               f"file:line pointers. To read it yourself, call Read again with `offset` and `limit`. "
               f"(/switchboard turns this off.)")
+    outline = "" if is_data else _source_outline(path, settings)
+    if outline:
+        reason += f"\nOutline of {path.name} (L<n> is the line a definition starts on):\n{outline}"
     return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                    "permissionDecisionReason": reason}}
 

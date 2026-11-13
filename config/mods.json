@@ -6,6 +6,7 @@
     "source_threshold_tokens": 12000,
     "reader": "haiku",
     "preview_chars": 1200,
+    "ccr": true,
     "drop_keys": ["avatar_url", "gravatar_id", "node_id", "_links", "etag", "tracking_id"]
   },
   "effort-optimizer": {"enabled": true},
