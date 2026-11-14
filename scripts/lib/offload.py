@@ -21,6 +21,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import auto_improve  # noqa: E402
 import context_cost  # noqa: E402
+import model_lint  # noqa: E402
 import optimize  # noqa: E402
 
 LINE_LIMIT = 80
@@ -93,6 +94,8 @@ def trim_section(section):
             short_label = len(block) == 1 and line.lstrip().startswith("**") and len(line) <= ITEM_LIMIT
             # A short paragraph that names a tool or command in backticks is a trigger, not an explanation.
             keep = short_label or ("`" in text and len(text) <= TRIGGER_LIMIT)
+        # An output-language rule must stay in the file Claude always loads, whatever its length or shape.
+        keep = keep or bool(model_lint.output_languages("\n".join(block)))
         if keep:
             kept.extend(block)
         else:

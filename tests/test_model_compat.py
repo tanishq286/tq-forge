@@ -73,6 +73,41 @@ class LintCaseTest(IsolatedStateTest):
         self.assertNotIn("M011", rule_ids(text, FABLE, kind="skill"))
         self.assertNotIn("M011", rule_ids(text, FABLE))
 
+    def test_output_language_rule_fires_only_when_the_description_does_not_name_the_language(self):
+        for description, body, must_fire, why in lint_cases.LANGUAGE_CASES:
+            with self.subTest(why=why):
+                text = lint_cases.skill_file(description, body)
+
+                fired = "M013" in rule_ids(text, FABLE, kind="skill")
+
+                self.assertEqual(fired, must_fire)
+
+    def test_output_language_rule_is_for_skills_and_does_not_depend_on_the_model(self):
+        text = lint_cases.skill_file(lint_cases.SILENT, "Always respond in Chinese.")
+
+        for model_id in (FABLE, OPUS, SONNET, HAIKU, None):
+            with self.subTest(model=model_id):
+                self.assertIn("M013", rule_ids(text, model_id, kind="skill"))
+        self.assertNotIn("M013", rule_ids(text, FABLE, kind="subagent"))
+        self.assertNotIn("M013", rule_ids(text, FABLE))
+
+    def test_output_language_finding_names_each_missing_language_and_costs_five_points(self):
+        text = lint_cases.skill_file(lint_cases.SILENT, "Write in Spanish. Then respond in Japanese.")
+
+        finding = [f for f in model_lint.lint(text, FABLE, kind="skill") if f["id"] == "M013"][0]
+
+        self.assertEqual(finding["penalty"], 5)
+        self.assertEqual(finding["count"], 2)
+        self.assertIn("Spanish, Japanese", finding["message"])
+        self.assertEqual(finding["line"], text.splitlines().index("Write in Spanish. Then respond in Japanese.") + 1)
+
+    def test_language_helpers_return_canonical_names_and_the_words_as_written(self):
+        self.assertEqual(model_lint.output_languages("Reply in 日本語. Write in Spanish. Reply in Japanese."),
+                         ["Japanese", "Spanish"])
+        self.assertEqual(model_lint.language_terms("Handles Mandarin and 日本語 notes."), ["Mandarin", "日本語"])
+        self.assertEqual(model_lint.mentioned_languages("Handles Mandarin and 日本語 notes."), {"Chinese", "Japanese"})
+        self.assertEqual(model_lint.output_languages("Respond in English."), [])
+
     def test_stale_id_rule_scales_the_penalty_with_the_status(self):
         for text, penalty, why in lint_cases.STALE_ID_CASES:
             with self.subTest(why=why):
@@ -109,7 +144,7 @@ class LintCaseTest(IsolatedStateTest):
         fable, haiku = model_lint.rules_for(FABLE), model_lint.rules_for(HAIKU)
 
         self.assertEqual(set(fable) - set(haiku), {"M004", "M007", "M010"})
-        self.assertEqual(model_lint.rules_for(None), ["M012", "S001", "S002"])
+        self.assertEqual(model_lint.rules_for(None), ["M012", "M013", "S001", "S002"])
 
 
 class LongHorizonTest(unittest.TestCase):

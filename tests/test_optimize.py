@@ -30,6 +30,7 @@ import frontmatter  # noqa: E402
 import linkdedupe  # noqa: E402
 import model_lint  # noqa: E402
 import model_sync  # noqa: E402
+import offload  # noqa: E402
 import models  # noqa: E402
 import optimize  # noqa: E402
 import scaffold  # noqa: E402
@@ -308,6 +309,8 @@ class SkillAndRuleTest(ProjectCase):
             self.assertTrue(has_frontmatter)
             self.assertLessEqual(len(fields["description"]), optimize.DESCRIPTION_LIMIT)
             self.assertIn("Use when", fields["description"])
+            self.assertIn(f"Use when asked to run {name}, to prepare {name}", fields["description"],
+                          "the trigger verbs and nouns survive the cut")
             self.assertEqual(fields["name"], name)
             self.assertIn("Bash", frontmatter.as_list(fields["allowed-tools"]))
             original = frontmatter.read(originals[name])[0]["description"]
@@ -385,6 +388,113 @@ class SkillAndRuleTest(ProjectCase):
         self.assertTrue(short.startswith("Does one thing well."))
         self.assertTrue(short.endswith("Use when asked for the thing."))
         self.assertEqual(optimize.compact_description("Short. Use when asked."), "Short. Use when asked.")
+
+
+LANGUAGE_DESCRIPTION = ("Turns release notes into customer announcements. " + "It also covers many more cases in detail. " * 6
+                        + "Use when asked to write release notes, changelogs or announcements for the monthly newsletter, "
+                        "the support team and the sales team after every product launch, in {language}.")
+
+
+class TriggerRetentionTest(ProjectCase):
+    """Compression may shorten a description; it must not change which prompts the skill matches."""
+
+    def _skill(self, description, body="# Notes\n\nWrite the notes.\n", name="notes"):
+        return write_skill(self.root / ".claude" / "skills" / name, name, json.dumps(description), body)
+
+    def _compact(self, limit=140):
+        plan = optimize.plan_skills(self.root, [], False, limit)
+        return optimize.build_report(self.root, plan, None, True), plan
+
+    def test_a_language_the_cut_would_drop_is_kept(self):
+        text = LANGUAGE_DESCRIPTION.format(language="Japanese")
+
+        control = optimize.compact_description(text, 140)
+        kept = optimize.compact_description(text, 140, keep=model_lint.language_terms(text))
+
+        self.assertNotIn("Japanese", control, "the fixture must lose the language without the guard")
+        self.assertIn("Japanese", kept)
+        self.assertLessEqual(len(kept), 140)
+        self.assertTrue(kept.startswith("Turns release notes") or kept.startswith("Use when asked to write release notes"))
+
+    def test_native_script_language_words_are_kept_as_written(self):
+        text = LANGUAGE_DESCRIPTION.format(language="日本語 and 中文")
+
+        kept = optimize.compact_description(text, 140, keep=model_lint.language_terms(text))
+
+        self.assertIn("日本語", kept)
+        self.assertIn("中文", kept)
+        self.assertLessEqual(len(kept), 140)
+
+    def test_a_language_already_inside_the_kept_text_is_not_repeated(self):
+        text = ("Replies in Japanese. " + "It also covers many more cases in detail. " * 8
+                + "Use when asked to write release notes.")
+
+        kept = optimize.compact_description(text, 160, keep=["Japanese"])
+
+        self.assertEqual(kept.count("Japanese"), 1)
+        self.assertNotIn("Languages:", kept)
+
+    def test_trigger_words_and_languages_survive_a_whole_skill_compaction(self):
+        text = LANGUAGE_DESCRIPTION.format(language="Japanese")
+        path = self._skill(text, "# Notes\n\nAlways respond in Japanese.\n")
+
+        report, plan = self._compact()
+
+        short = frontmatter.read(path.read_text())[0]["description"]
+        self.assertEqual(report["files"], [".claude/skills/notes/SKILL.md"])
+        self.assertLessEqual(len(short), 140)
+        for word in ("Use when asked to write release notes", "Japanese"):
+            self.assertIn(word, short)
+        self.assertIn(text, path.read_text(), "the full original description is kept in the body")
+        self.assertFalse(any("M013" in warning for warning in plan["warnings"]))
+        self.assertEqual(self._compact()[0]["files"], [], "a second pass finds nothing more to cut")
+
+    def test_a_body_language_the_description_never_names_is_reported(self):
+        text = LANGUAGE_DESCRIPTION.format(language="the monthly digest")
+        self._skill(text, "# Notes\n\nAlways respond in Japanese.\n")
+
+        _, plan = self._compact()
+
+        self.assertTrue(any("Japanese" in warning and "M013" in warning for warning in plan["warnings"]), plan["warnings"])
+
+    def test_a_long_skill_keeps_its_language_section_in_the_body(self):
+        body = ["# Notes", "", "## Procedure", "", "1. Read.", "2. Write.", "3. Check.", "",
+                "## Examples", "", "Always respond in Japanese, whatever language the request is in.", "",
+                "## API reference", ""] + [f"- endpoint {n}: GET /v1/notes/{n}" for n in range(130)]
+        path = self._skill("Writes notes. Use when asked to write notes.", "\n".join(body) + "\n")
+
+        self._compact()
+
+        text = path.read_text()
+        self.assertIn("Always respond in Japanese", text)
+        self.assertNotIn("endpoint 129", text)
+        self.assertIn("endpoint 129", (path.parent / "reference.md").read_text())
+        self.assertNotIn("Always respond in Japanese", (path.parent / "reference.md").read_text())
+
+    def test_claude_md_keeps_a_section_that_sets_the_output_language(self):
+        (self.root / "src" / "api").mkdir(parents=True)
+        (self.root / "tests").mkdir()
+        filler = [f"- Rule {n}: keep module {n} small and covered by a test." for n in range(45)]
+        (self.root / "CLAUDE.md").write_text("\n".join([
+            "# Service", "", "## API conventions", "", "These rules apply to files under `src/api/`.",
+            "Always reply in Chinese.", "", *filler, "", "## Testing rules", "",
+            "These rules apply to files under `tests/`.", "", *filler, ""]))
+
+        optimize.build_report(self.root, optimize.plan_rules(self.root), None, True)
+
+        self.assertIn("Always reply in Chinese.", (self.root / "CLAUDE.md").read_text())
+        self.assertFalse((self.root / ".claude" / "rules" / "api-conventions.md").exists())
+        self.assertTrue((self.root / ".claude" / "rules" / "testing-rules.md").exists(), "other sections still move")
+
+    def test_prose_offload_keeps_an_output_language_paragraph(self):
+        section = "\n".join(["## Style", "", "Always reply in Chinese, even when the user writes in English.", "",
+                             "This paragraph explains the reasoning behind the style guide at some length.", ""])
+
+        routing, moved = offload.trim_section(section)
+
+        self.assertTrue(moved)
+        self.assertIn("Always reply in Chinese", routing)
+        self.assertNotIn("explains the reasoning", routing)
 
 
 class ShieldTest(ProjectCase):

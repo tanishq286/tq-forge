@@ -54,6 +54,7 @@ import backup  # noqa: E402
 import context_cost  # noqa: E402
 import drytest  # noqa: E402
 import frontmatter  # noqa: E402
+import model_lint  # noqa: E402
 import models  # noqa: E402
 import scaffold  # noqa: E402
 from backup import BACKUP_DIR, LINK_BACKUPS, MANIFEST, apply_writes, restore  # noqa: E402,F401 (re-exported)
@@ -280,13 +281,36 @@ def _fit_sentences(sentences, limit):
     return _cut(sentences[0], limit)
 
 
-def compact_description(text, limit=DESCRIPTION_LIMIT):
+def _has_word(text, term):
+    """True when `term` appears in `text` as a whole word (native-script terms match as written)."""
+    if term.isascii():
+        return re.search(rf"(?<!\w){re.escape(term)}(?!\w)", text, re.I) is not None
+    return term in text
+
+
+def compact_description(text, limit=DESCRIPTION_LIMIT, keep=()):
     """Shorten a description to `limit` characters, keeping its "Use when" sentence.
 
     The trigger sentence is what Claude matches a skill on, so it is reserved
     first and the lead-in fills the space that is left. A trigger too long to
     fit is cut, never dropped: a skill with no trigger is hard to match at all.
+
+    `keep` lists words that must survive, such as the output languages a skill
+    names. Claude routes on the description alone, so a language that the cut
+    removes would stop the skill matching prompts in that language. Any `keep`
+    word the cut lost comes back as a closing `Languages: ...` clause, and the
+    rest of the text is shortened to make room for it.
     """
+    short = _compact(text, limit)
+    lost = [term for term in dict.fromkeys(keep) if not _has_word(short, term)]
+    if not lost:
+        return short
+    clause = f"Languages: {', '.join(lost)}."
+    room = max(limit - len(clause) - 1, MIN_LEAD_CHARS)
+    return f"{_compact(text, room)} {clause}".strip()
+
+
+def _compact(text, limit):
     flat = " ".join(text.split())
     if len(flat) <= limit:
         return flat
@@ -337,7 +361,8 @@ def _split_reference(name, body):
     """Move reference-like sections out of a long skill body. Returns (body, reference_text)."""
     preamble, sections = split_sections(body)
     moved = [text for title, text in sections
-             if REFERENCE_TITLE.search(title) and not REQUIRED_SKILL_TITLE.search(title)]
+             if REFERENCE_TITLE.search(title) and not REQUIRED_SKILL_TITLE.search(title)
+             and not model_lint.output_languages(text)]  # an output-language rule stays where Claude reads it
     if not moved:
         return body, ""
     kept = [text for _, text in sections if text not in moved]
@@ -377,8 +402,14 @@ def _plan_one_skill(root, path, extract_scripts, limit=DESCRIPTION_LIMIT, follow
     description = " ".join(str(fields.get("description", "")).split())
     new_block, new_body = block, body
 
+    wanted = model_lint.output_languages(body)
+    unnamed = [language for language in wanted if language not in model_lint.mentioned_languages(description)]
+    if unnamed:
+        plan["warnings"].append(f"skills: {name} body sets output language {', '.join(unnamed)} but its "
+                                f"description does not name it; add it so Claude can route on it (rule M013)")
+
     if len(description) > limit:
-        short = compact_description(description, limit)
+        short = compact_description(description, limit, keep=model_lint.language_terms(description))
         new_block = replace_field(block, "description", f"description: {json.dumps(short, ensure_ascii=False)}")
         if not re.search(r"^## Full description\s*$", body, re.M):  # an earlier run already kept the original
             new_body = join_markdown([body, f"## Full description\n\n{description}"])
@@ -469,7 +500,8 @@ def plan_rules(root):
     preamble, sections = split_sections(text)
     kept = [preamble]
     for title, section in sections:
-        scopes = [] if CORE_TITLE.search(title) else path_scopes(section, root)
+        # A path-scoped rule loads only for matching files; an output-language rule has to stay in CLAUDE.md.
+        scopes = [] if CORE_TITLE.search(title) or model_lint.output_languages(section) else path_scopes(section, root)
         target = f".claude/rules/{scaffold.slugify(title)}.md"
         if not scopes or target in plan["writes"] or (root / target).exists():
             kept.append(section)

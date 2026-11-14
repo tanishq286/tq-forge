@@ -202,6 +202,7 @@ The model-compatibility lint is keyed by family, so a model added this way is li
 | M004 | A request for raw reasoning or chain of thought in the reply, which can be declined as `reasoning_extraction`. | Fable, Opus, Sonnet |
 | M011 | A long-horizon subagent with no completion instructions at an effort level where the model stops early (Fable at `low` or `medium`; Sonnet and Haiku at `low`). | Fable, Sonnet, Haiku |
 | M012 | A retired (−10), deprecated (−6) or superseded (−3) Claude model id. | any target |
+| M013 | A skill body that sets an output language (`respond in Chinese`, `write in Spanish`) which the frontmatter `description` never names. Claude routes on the description alone. | any target, skills |
 
 M002, M003, M005, M006, M007 and M009 cover token budgets shown to the model, think-less instructions, thinking incantations, history editing, forced `tool_choice` and prefill. A file that pins an outdated id such as `claude-sonnet-4-6` is linted against its family's current model; before 1.3.0 it got no model rules at all.
 

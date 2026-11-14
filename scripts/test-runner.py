@@ -485,6 +485,14 @@ def test_model_compat_lint(suite: TestSuite):
                       "M012 fires for a target the lint has no model rules for")
     suite.log_pass("M012 stale-model-id", f"{len(lint_cases.STALE_ID_CASES) + 1} cases, penalties 10 / 6 / 3")
 
+    for description, body, must_fire, why in lint_cases.LANGUAGE_CASES:
+        text = lint_cases.skill_file(description, body)
+        suite.assert_true(bool(_fired("M013", text, lint_cases.FABLE, kind="skill")) == must_fire,
+                          f"M013: expected {'a finding' if must_fire else 'no finding'} for {why}")
+    suite.assert_true(not _fired("M013", lint_cases.skill_file(lint_cases.SILENT, "Respond in Chinese."),
+                                 lint_cases.FABLE, kind="subagent"), "M013 is about skills; a subagent is not checked")
+    suite.log_pass("M013 output-language-not-in-description", f"{len(lint_cases.LANGUAGE_CASES) + 1} cases")
+
     _assert_stale_pin_is_scored(suite)
     _assert_templates_carry_completion(suite)
     _assert_scaffold_adds_completion(suite)
@@ -627,6 +635,11 @@ def _assert_bundled_files_name_current_ids(suite: TestSuite):
         suite.assert_true(not _fired("M012", path.read_text(encoding="utf-8"), None),
                           f"{path.relative_to(ROOT)}: names a stale model id")
     suite.log_pass("bundled files", f"{scanned} templates and skills name no stale model id")
+    skills = sorted((ROOT / "skills").rglob("SKILL.md"))
+    for path in skills:
+        suite.assert_true(not _fired("M013", path.read_text(encoding="utf-8"), None, kind="skill"),
+                          f"{path.relative_to(ROOT)}: body sets an output language its description does not name")
+    suite.log_pass("bundled skills", f"{len(skills)} skills name every output language in their description")
 
 
 def test_compat_matrix(suite: TestSuite):

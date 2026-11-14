@@ -112,3 +112,32 @@ STALE_ID_CASES = (
     ("Do not use claude-3-opus-20240229.", None, "a negated mention"),
     ("Install claude-code and claude-flow first.", None, "names that are not model ids"),
 )
+
+
+def skill_file(description, body):
+    """A minimal SKILL.md, for the rules that compare the body with the frontmatter description."""
+    return f"---\nname: example\ndescription: {description}\n---\n\n# Example\n\n{body}\n"
+
+
+SILENT = "Summarizes a report. Use when the user asks for a summary."
+
+# (description, body, must fire, what the case shows). M013 reads skills only.
+LANGUAGE_CASES = (
+    (SILENT, "Always respond in Chinese.", True, "a Chinese reply the description never names"),
+    (SILENT, "Output in Japanese only.", True, "output in Japanese"),
+    (SILENT, "Write the summary in Spanish.", True, "write in Spanish"),
+    (SILENT, "Translate the result into Hindi.", True, "translate into Hindi"),
+    (SILENT, "Output language: French", True, "an output-language line"),
+    (SILENT, "The reply must be in German.", True, "must be in German"),
+    (SILENT, "Reply in Simplified Chinese.", True, "a script variant"),
+    (SILENT, "Write in Spanish. Then respond in Japanese.", True, "two languages, neither named"),
+    ("Summarizes a report in Chinese. Use when asked.", "Always respond in Chinese.", False, "the description names it"),
+    ("Summarizes a report. Use when asked for 中文 notes.", "Respond in Chinese.", False, "a native spelling counts"),
+    ("Replies in Japanese. Use when asked.", "Write in Spanish. Respond in Japanese.", True, "only one of two is named"),
+    (SILENT, "Respond in English.", False, "English is the default"),
+    (SILENT, "Never respond in Chinese.", False, "a negated mention"),
+    (SILENT, "Read reports written in Japanese.", False, "an input language is not an output language"),
+    (SILENT, "```\nrespond in French\n```", False, "a sample prompt inside a code fence"),
+    (SILENT, "Respond in Korean.\n<!-- tq-forge-lint-ignore: M013 -->", False, "the file opts out"),
+    (SILENT, "Respond in the language the user writes in.", False, "no language is named"),
+)

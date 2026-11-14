@@ -4,6 +4,21 @@ All notable changes to `tq-forge` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] — 2026-11-14
+
+Two fixes for skills that set an output language, from community feedback on the Dev.to launch. Thanks to laogedev2 and Halfcycle.
+
+### Added
+- **Lint rule M013** `output-language-not-in-description` (−5): a skill body that tells Claude to answer in a language (`respond in Chinese`, `output in Japanese`, `write in Spanish`, `translate into Hindi`, `output language: French`, `must be in German`) while the frontmatter `description` never names it. Claude routes a skill on `name` and `description` alone, so the constraint can be missed. English is the default and is never reported; negated mentions, input languages (`documents written in Japanese`) and sample prompts inside code fences are ignored. It checks skills and applies to every target model. A native spelling in the description (`日本語`, `中文`) counts.
+
+### Changed
+- **`/savings` keeps output languages through description compaction.** When a description has to be cut, any language it names that the cut would drop comes back as a closing `Languages: ...` clause, and the rest is shortened to make room. The `Use when` sentence is still reserved first, so its leading verbs and nouns survive, and the full original description stays in `## Full description`.
+- **`/savings` never moves an output-language rule out of the file Claude reads it from.** A skill section that sets the language stays in `SKILL.md` instead of going to `reference.md`; a `CLAUDE.md` section that sets it stays in `CLAUDE.md` instead of becoming a path-scoped rule; a paragraph that sets it is not offloaded as prose.
+- `/savings` warns, with the skill name and the rule id, when a skill body sets a language that its description does not name.
+
+### Tests
+- 18 M013 cases in the scorer assertions and the unit tests, a check that the 18 bundled skills trigger no M013, and a retention suite for descriptions, skill sections, `CLAUDE.md` rules and prose offload. The lossless benchmark is unchanged at 7337 → 3121 estimated tokens (−57.5%).
+
 ## [1.3.0] — 2026-11-13
 
 Model compatibility for the Claude 5.2 / 5.5 lineup: a fuller registry, a stricter lint, and a generated cross-model matrix.

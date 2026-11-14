@@ -8,7 +8,8 @@ Two kinds of rule:
 
   pattern rules  a regular expression over the text (M001-M010, S001, S002)
   check rules    a function over the parsed file (M011 completion instructions,
-                 M012 stale model ids)
+                 M012 stale model ids, M013 output language missing from the
+                 frontmatter description)
 
 Findings are heuristics over text, not proof. A file can opt out of a rule it
 has a good reason to break with an HTML comment:
@@ -225,6 +226,17 @@ RULES = (
         "fix": "Use the current id, or run `tq-forge sync-models --apply` to rewrite pinned `model:` fields.",
     },
     {
+        "id": "M013",
+        "name": "output-language-not-in-description",
+        "penalty": 5,
+        "models": ANY_TARGET,
+        "check": "_check_output_language",
+        "message": "The skill body sets an output language that the frontmatter description never names. "
+        "Claude routes a skill on `name` and `description` alone, so the constraint can be missed.",
+        "fix": "Name the language in `description` (for example `Replies in Japanese.`), "
+        "or drop the directive if it is not a requirement.",
+    },
+    {
         "id": "S001",
         "name": "unfilled-placeholder",
         "penalty": 25,  # large enough that an unfilled scaffold never passes the >= 70 gate
@@ -375,7 +387,117 @@ def _check_stale_ids(text, model_id, kind, effort):
     return {"offsets": offsets, "penalty": STALE_PENALTY[worst], "detail": detail}
 
 
-_CHECKS = {"_check_completion": _check_completion, "_check_stale_ids": _check_stale_ids}
+# --------------------------------------------------------------- output language
+
+# English is the default output language, so it is never reported. Each entry is
+# (canonical name, English spellings matched on word boundaries, native spellings matched as written).
+LANGUAGES = (
+    ("Chinese", r"chinese|mandarin|cantonese", "中文|汉语|漢語|普通话|普通話"),
+    ("Japanese", r"japanese", "日本語"),
+    ("Korean", r"korean", "한국어"),
+    ("Spanish", r"spanish|español", ""),
+    ("French", r"french|français", ""),
+    ("German", r"german|deutsch", ""),
+    ("Hindi", r"hindi", "हिन्दी|हिंदी"),
+    ("Portuguese", r"portuguese|português", ""),
+    ("Italian", r"italian|italiano", ""),
+    ("Russian", r"russian", "русский"),
+    ("Arabic", r"arabic", "العربية"),
+    ("Dutch", r"dutch|nederlands", ""),
+    ("Turkish", r"turkish|türkçe", ""),
+    ("Vietnamese", r"vietnamese|tiếng việt", ""),
+    ("Indonesian", r"indonesian|bahasa indonesia", ""),
+    ("Thai", r"thai", "ไทย"),
+    ("Polish", r"polish|polski", ""),
+    ("Bengali", r"bengali|bangla", "বাংলা"),
+    ("Hebrew", r"hebrew", "עברית"),
+    ("Ukrainian", r"ukrainian", "українська"),
+    ("Swedish", r"swedish|svenska", ""),
+)
+
+
+def _spelling(english, native):
+    parts = [f"(?<!\\w)(?:{english})(?!\\w)"]
+    if native:
+        parts.append(f"(?:{native})")
+    return "|".join(parts)
+
+
+_LANGUAGE_RE = {name: re.compile(_spelling(english, native), re.I) for name, english, native in LANGUAGES}
+_ANY_LANGUAGE = "|".join(f"(?:{_spelling(english, native)})" for _, english, native in LANGUAGES)
+_VARIANT = r"(?:(?:simplified|traditional|brazilian|european|latin american)\s+)?"
+_LANGUAGE_WORD = rf"(?P<lang>{_ANY_LANGUAGE})"
+_OUTPUT_VERB = (r"(?:respond|reply|answer|output|write|produce|generate|draft|compose|return"
+                r"|summari[sz]e|communicate|speak)\w*")
+# A directive that makes a language the skill's output: "reply in X", "translate to X",
+# "output language: X", "must be in X".
+_DIRECTIVES = tuple(re.compile(pattern, re.I) for pattern in (
+    rf"\b{_OUTPUT_VERB}\b[^.\n]{{0,40}}?\b(?:in|into|using)\s+(?:the\s+)?{_VARIANT}{_LANGUAGE_WORD}",
+    rf"\btranslat\w*\b[^.\n]{{0,40}}?\b(?:to|into)\s+(?:the\s+)?{_VARIANT}{_LANGUAGE_WORD}",
+    rf"\b(?:output|response|reply|answer|target)\s+language\b[\s*:=-]*(?:(?:is|should be|must be)\s+)?{_VARIANT}"
+    rf"{_LANGUAGE_WORD}",
+    rf"\b(?:must|should|always|only)\s+(?:be\s+)?(?:written\s+|answered\s+|replied\s+|given\s+)?in\s+"
+    rf"{_VARIANT}{_LANGUAGE_WORD}",
+))
+_CODE_FENCE = re.compile(r"```.*?```", re.S)
+
+
+def _language_of(word):
+    return next(name for name, pattern in _LANGUAGE_RE.items() if pattern.fullmatch(word))
+
+
+def _without_code(text):
+    """`text` with fenced code blanked out, offsets kept: a sample prompt in a fence is not a directive."""
+    return _CODE_FENCE.sub(lambda match: re.sub(r"[^\n]", " ", match.group(0)), text)
+
+
+def output_language_directives(text):
+    """(language, offset) for each non-negated output-language directive, in the order they appear."""
+    scan = _without_code(text)
+    found = {}
+    for directive in _DIRECTIVES:
+        for match in directive.finditer(scan):
+            if _is_negated(scan, match.start()):
+                continue
+            found.setdefault((_language_of(match.group("lang")), match.start("lang")), match.start())
+    return sorted(((language, offset) for (language, _), offset in found.items()), key=lambda item: item[1])
+
+
+def output_languages(text):
+    """Languages `text` tells Claude to write in, once each, in order of first appearance."""
+    return list(dict.fromkeys(language for language, _ in output_language_directives(text)))
+
+
+def language_terms(text):
+    """Each language word in `text` as it is spelled there (so `日本語` and `Japanese` both count)."""
+    terms = []
+    for pattern in _LANGUAGE_RE.values():
+        terms.extend(match.group(0) for match in pattern.finditer(text))
+    return list(dict.fromkeys(terms))
+
+
+def mentioned_languages(text):
+    """Canonical names of every language `text` names."""
+    return {name for name, pattern in _LANGUAGE_RE.items() if pattern.search(text)}
+
+
+def _check_output_language(text, model_id, kind, effort):
+    if kind != "skill":
+        return None
+    fields, _, _ = frontmatter.read(text)
+    named = mentioned_languages(str(fields.get("description", "")))
+    missing = {}
+    for language, offset in output_language_directives(text):
+        if language not in named:
+            missing.setdefault(language, offset)
+    if not missing:
+        return None
+    return {"offsets": sorted(missing.values()),
+            "detail": f"the body asks for output in {', '.join(missing)}; the description does not name it"}
+
+
+_CHECKS = {"_check_completion": _check_completion, "_check_stale_ids": _check_stale_ids,
+           "_check_output_language": _check_output_language}
 
 
 def lint(text, model_id, kind=None, effort=None):

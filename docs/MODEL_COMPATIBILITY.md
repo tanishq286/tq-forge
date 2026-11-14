@@ -87,6 +87,7 @@ The eight templates behind `/tq-forge-agent` are prompt skeletons, scored only a
 | M010 | `thinking-disabled` | yes | yes | yes | no | 6 |
 | M011 | `missing-completion-instructions` | yes | no | yes | yes | 6 |
 | M012 | `stale-model-id` | yes | yes | yes | yes | 3-10 |
+| M013 | `output-language-not-in-description` | yes | yes | yes | yes | 5 |
 | S001 | `unfilled-placeholder` | yes | yes | yes | yes | 25 |
 | S002 | `bypass-permissions` | yes | yes | yes | yes | 10 |
 
