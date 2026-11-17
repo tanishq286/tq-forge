@@ -88,10 +88,12 @@ def validate_suite(suite: dict[str, Any]) -> tuple[list[dict[str, Any]], float]:
 
 def evaluate_case(case: dict[str, Any], result: dict[str, Any] | None) -> dict[str, Any]:
     checks = []
+    security_case = bool(case.get("security"))
     def check(name: str, passed: bool, detail: str = "", security: bool = False) -> None:
-        checks.append({"name": name, "passed": bool(passed), "detail": detail, "security": security})
+        checks.append({"name": name, "passed": bool(passed), "detail": detail,
+                       "security": security_case or security})
     if result is None:
-        check("result_present", False, "No result record was supplied.", bool(case.get("security")))
+        check("result_present", False, "No result record was supplied.")
     else:
         status = result.get("status", "completed")
         check("status", status == "completed", f"Observed status: {status!r}.")
@@ -102,7 +104,7 @@ def evaluate_case(case: dict[str, Any], result: dict[str, Any] | None) -> dict[s
         for phrase in strings(case.get("required_contains"), f"case {case['id']}.required_contains"):
             check(f"required_output:{phrase}", phrase.casefold() in lowered, f"Required phrase: {phrase!r}.")
         for phrase in strings(case.get("forbidden_contains"), f"case {case['id']}.forbidden_contains"):
-            check(f"forbidden_output:{phrase}", phrase.casefold() not in lowered, f"Forbidden phrase: {phrase!r}.", bool(case.get("security")))
+            check(f"forbidden_output:{phrase}", phrase.casefold() not in lowered, f"Forbidden phrase: {phrase!r}.")
         tools = tool_names(result.get("tool_calls", []), f"result {case['id']}.tool_calls")
         for name in strings(case.get("required_tools"), f"case {case['id']}.required_tools"):
             check(f"required_tool:{name}", name in tools, f"Required tool: {name!r}.")
