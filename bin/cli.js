@@ -20,6 +20,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const crypto = require('crypto');
 const { execSync, execFileSync, spawnSync } = require('child_process');
 
 const PKG_ROOT = path.resolve(__dirname, '..');
@@ -88,6 +89,37 @@ function seedState() {
   }
 }
 
+function treeSignature(target) {
+  const stat = fs.lstatSync(target);
+  if (stat.isSymbolicLink()) return { type: 'symlink', target: fs.readlinkSync(target) };
+  if (stat.isFile()) {
+    const hash = crypto.createHash('sha256').update(fs.readFileSync(target)).digest('hex');
+    return { type: 'file', hash };
+  }
+  if (stat.isDirectory()) {
+    const entries = fs.readdirSync(target).sort();
+    return { type: 'directory', entries: entries.map((name) => [name, treeSignature(path.join(target, name))]) };
+  }
+  return { type: 'other', mode: stat.mode };
+}
+
+function sameTree(left, right) {
+  try {
+    return JSON.stringify(treeSignature(left)) === JSON.stringify(treeSignature(right));
+  } catch {
+    return false;
+  }
+}
+
+function backupExisting(target, label) {
+  if (!fs.existsSync(target) && !fs.lstatSync(target, { throwIfNoEntry: false })) return null;
+  const backupRoot = path.join(TQ_HOME, 'backups');
+  fs.mkdirSync(backupRoot, { recursive: true });
+  const backup = path.join(backupRoot, `${Date.now()}-${process.pid}-${label}`);
+  fs.cpSync(target, backup, { recursive: true, dereference: false, verbatimSymlinks: true, errorOnExist: true });
+  return backup;
+}
+
 function install({ force }) {
   console.log(c.bold('\n🔨 tq-forge installer\n'));
 
@@ -106,6 +138,7 @@ function install({ force }) {
   for (const sub of ['scripts', 'templates', 'config']) {
     const src = path.join(PKG_ROOT, sub);
     const dst = path.join(INSTALL_DIR, sub);
+    if (fs.existsSync(dst) || fs.lstatSync(dst, { throwIfNoEntry: false })) backupExisting(dst, `support-${sub}`);
     fs.rmSync(dst, { recursive: true, force: true });
     fs.cpSync(src, dst, { recursive: true });
   }
@@ -132,6 +165,7 @@ function install({ force }) {
       skipped++;
       continue;
     }
+    backupExisting(dst, `skill-${name}`);
     fs.rmSync(dst, { recursive: true, force: true });
     fs.cpSync(path.join(PKG_ROOT, 'skills', name), dst, { recursive: true });
     installed++;
@@ -155,15 +189,31 @@ function uninstall() {
   console.log(c.bold('\n🧹 tq-forge uninstall\n'));
   const skills = listSkillDirs();
   let removed = 0;
+  let preserved = 0;
   for (const name of skills) {
     const dst = path.join(SKILLS_DIR, name);
-    if (fs.existsSync(dst)) {
+    const source = path.join(PKG_ROOT, 'skills', name);
+    if (!fs.existsSync(dst) && !fs.lstatSync(dst, { throwIfNoEntry: false })) continue;
+    if (sameTree(dst, source)) {
       fs.rmSync(dst, { recursive: true, force: true });
       removed++;
+    } else {
+      console.log(`  ${c.y('•')} preserved customized skill: ${name}`);
+      preserved++;
     }
   }
-  fs.rmSync(INSTALL_DIR, { recursive: true, force: true });
-  console.log(`  ${c.g('✓')} removed ${removed} skills and support files`);
+  for (const sub of ['scripts', 'templates', 'config']) {
+    const dst = path.join(INSTALL_DIR, sub);
+    const source = path.join(PKG_ROOT, sub);
+    if (!fs.existsSync(dst) && !fs.lstatSync(dst, { throwIfNoEntry: false })) continue;
+    if (sameTree(dst, source)) fs.rmSync(dst, { recursive: true, force: true });
+    else {
+      console.log(`  ${c.y('•')} preserved customized support files: ${sub}`);
+      preserved++;
+    }
+  }
+  try { fs.rmdirSync(INSTALL_DIR); } catch {}
+  console.log(`  ${c.g('✓')} removed ${removed} unchanged skills; preserved ${preserved} customized locations`);
   console.log(
     `\n${c.y('Note:')} your data in ${c.dim(TQ_HOME)} (sandbox, logs, context.md) was kept.`
   );
