@@ -47,6 +47,7 @@ import os
 import pathlib
 import re
 import sys
+import tempfile
 import time
 import zlib
 
@@ -213,18 +214,42 @@ def _readable(text):
 
 
 def _park_payload(text):
-    """Save a payload under ~/.claude/tq-forge-payloads/ (owner-only) and drop week-old ones."""
-    PAYLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    """Save a payload under ~/.claude/tq-forge-payloads/ with restrictive POSIX permissions."""
+    if PAYLOAD_DIR.is_symlink():
+        raise OSError(f"refusing symlinked payload directory: {PAYLOAD_DIR}")
+    PAYLOAD_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if os.name == "posix":
+        PAYLOAD_DIR.chmod(0o700)
     cutoff = time.time() - PAYLOAD_KEEP_SECONDS
     for old in PAYLOAD_DIR.glob("*.txt"):
         try:
-            if old.stat().st_mtime < cutoff:
+            if old.is_symlink():
+                old.unlink()
+            elif old.stat().st_mtime < cutoff:
                 old.unlink()
         except OSError:
             pass
     target = PAYLOAD_DIR / f"{hashlib.sha256(text.encode('utf-8')).hexdigest()[:16]}.txt"
-    target.touch(mode=0o600, exist_ok=True)
-    target.write_text(_readable(text), encoding="utf-8")
+    if target.is_symlink():
+        raise OSError(f"refusing symlinked payload file: {target}")
+    fd, temporary_name = tempfile.mkstemp(prefix=".payload-", suffix=".tmp", dir=str(PAYLOAD_DIR))
+    temporary = pathlib.Path(temporary_name)
+    try:
+        if os.name == "posix":
+            os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+            handle.write(_readable(text))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, target)
+        if os.name == "posix":
+            target.chmod(0o600)
+    except BaseException:
+        try:
+            temporary.unlink()
+        except OSError:
+            pass
+        raise
     return target
 
 
