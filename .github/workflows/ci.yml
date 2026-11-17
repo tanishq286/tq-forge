@@ -48,6 +48,12 @@ jobs:
       - name: Run automated test suite & scorer benchmarks
         run: npm test
 
+      - name: Agent evaluation smoke suite
+        run: |
+          bash scripts/evaluate.sh --suite evals/core-suite.json --results evals/fixtures/core-results.jsonl
+          bash scripts/evaluate.sh --suite evals/core-suite.json --results evals/fixtures/core-results.jsonl --json > "$RUNNER_TEMP/agent-eval-report.json"
+          python3 -c "import json,sys; r=json.load(open(sys.argv[1])); assert r['summary']['gate']=='pass'" "$RUNNER_TEMP/agent-eval-report.json"
+
       - name: CLI install smoke test (isolated dirs)
         run: |
           export TQ_FORGE_HOME="$RUNNER_TEMP/tqhome"
