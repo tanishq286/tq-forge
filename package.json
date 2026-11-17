@@ -1,7 +1,7 @@
 {
   "name": "tq-forge",
   "version": "1.3.1",
-  "description": "An autonomous skill + agent factory for Claude Code. Forge, score, and promote slash-command skills and agents from a one-line intent.",
+  "description": "Open agent engineering toolkit: build, validate, evaluate and optimize agent skills and workflows.",
   "bin": {
     "tq-forge": "bin/cli.js"
   },
@@ -16,7 +16,9 @@
     "LICENSE",
     "CHANGELOG.md",
     "!**/__pycache__/**",
-    "!**/*.pyc"
+    "!**/*.pyc",
+    "evals/",
+    "docs/"
   ],
   "scripts": {
     "test": "python3 scripts/test-runner.py && python3 -m unittest discover -s tests",
@@ -31,7 +33,13 @@
     "claude-skills",
     "subagents",
     "mcp",
-    "cli"
+    "cli",
+    "agent-evaluation",
+    "agent-testing",
+    "agentops",
+    "llm-evaluation",
+    "regression-testing",
+    "ai-safety"
   ],
   "author": "tanishq286",
   "license": "MIT",
