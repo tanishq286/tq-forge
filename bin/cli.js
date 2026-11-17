@@ -274,6 +274,7 @@ ${c.bold('Forge and score')} ${c.dim('(each takes --help)')}
   scaffold    Deterministic scaffolds: skill, agent, hooks, mcp, list
   score       0-100 quality score with model-compat lint
   validate    Structural check of a skill, subagent, .mcp.json or settings.json
+  evaluate    Evaluate recorded agent runs against a versioned regression suite
 
 ${c.bold('Context optimizer')} ${c.dim('(dry run unless --apply; restore undoes it)')}
   measure       Estimate the always-loaded context of the current project
@@ -316,6 +317,7 @@ const PASS_THROUGH = {
   scaffold: ['scaffold.sh', []],
   score: ['quality-score.sh', []],
   validate: ['dry-test.sh', []],
+  evaluate: ['evaluate.sh', []],
   measure: ['optimize.sh', ['measure']],
   optimize: ['optimize.sh', ['optimize']],
   'optimize-mcp': ['optimize.sh', ['optimize', '--only', 'mcp']],
