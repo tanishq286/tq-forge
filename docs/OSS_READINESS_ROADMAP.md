@@ -1,159 +1,168 @@
-# Six-Month Open-Source Readiness Plan
+# 15-Day Claude for Open Source Application Sprint
 
-**Owner:** tq-forge maintainers  
-**Planning window:** 17 November 2026 – 17 May 2027  
-**Primary objective:** Build a demonstrably useful, secure, adopted open-source developer tool and submit an honest application to Anthropic's Claude for Open Source program when the evidence supports it.
+**Owner:** tq-forge maintainer  
+**Sprint:** 17–31 November 2026 (15 calendar days)  
+**Goal:** Prepare and submit the strongest truthful application to Anthropic's Claude for Open Source program within 10–15 days, if the application form is open. This is an application-readiness sprint, not a promise of approval.
 
-> This is an execution plan, not a promise of acceptance. Program eligibility and approval are decided by Anthropic. Never fabricate downloads, dependent repositories, contributors, merged pull requests, security scores, user testimonials, or benchmark results.
+> Important: Anthropic's listed thresholds measure existing ecosystem impact, including activity over the preceding 12 months. We cannot legitimately manufacture 500 dependent repositories, 100 dependent packages, 200,000 monthly downloads, 100 upstream merged PRs, 20 external contributors, or an OpenSSF criticality score of 0.4 in 15 days. Anthropic explicitly invites maintainers who do not quite meet a threshold to apply and explain the ecosystem value. We will use that route honestly if appropriate.
 
-## 1. Program criteria and reality check
+## 1. What we are applying for
 
-Anthropic's published Claude for Open Source criteria include one or more of the following:
+Anthropic's official program currently advertises six months of Claude Ultra for selected open-source contributors. The published application asks for the GitHub repository, evidence of reach/impact, and how the subscription will be used.
 
-- Maintainer/library author: at least 500 dependent repositories, 100 dependent packages, or 200,000 combined monthly downloads across package registries.
-- Core contributor: listed committer or maintainer on a recognized foundation or language project.
-- Active contributor: at least 100 pull requests merged into repositories the applicant does not own during the preceding 12 months.
-- Community builder: at least 20 unique external contributors with merged pull requests to one of the applicant's repositories during the preceding 12 months.
-- Critical infrastructure: a maintained repository with an OpenSSF criticality score of at least 0.4.
+Official page: https://claude.com/contact-sales/claude-for-oss
 
-Anthropic says maintainers who do not quite meet a listed threshold may still apply and explain the ecosystem value of their project. Meeting a threshold is not a guarantee of approval.
+Published eligibility routes include:
+- Maintainer/library author: 500+ dependent repositories, 100+ dependent packages, or 200,000+ combined monthly downloads across registries.
+- Core contributor: listed committer/maintainer on a recognized foundation or language project.
+- Active contributor: 100+ PRs merged into repositories the applicant does not own in the preceding 12 months.
+- Community builder: 20+ unique external contributors with merged PRs to a maintained repository in the preceding 12 months.
+- Critical infrastructure: maintained repository with OpenSSF criticality score 0.4+.
 
-**Current assessment:** tq-forge is an early-stage, owner-led project. The repository has useful foundations (CLI, tests, CI, security policy, contribution guide, and draft hardening/evaluation work), but the project must first prove real execution quality, external adoption, and community participation. Do not describe it as critical infrastructure or claim broad adoption without evidence.
+These are alternative routes, not a checklist to fake. Approval remains Anthropic's decision.
 
-## 2. Product strategy: narrow the promise, prove the outcome
+## 2. Current project positioning
 
-For this six-month period, focus tq-forge on one credible promise:
+tq-forge should be presented narrowly and accurately:
 
-**A safe, reproducible toolkit for creating, validating, evaluating, and maintaining Claude Code skills and subagents.**
+**A focused open-source toolkit for creating, validating, optimizing, and evaluating Claude Code skills and subagents.**
 
-Do not claim universal autonomous-agent orchestration until multiple runtime adapters actually execute tasks and pass the same evaluation contract.
+Existing strengths visible in the repository:
+- Published npm CLI and reusable skill/agent templates.
+- Deterministic static scoring and context optimization.
+- Automated tests and GitHub Actions CI.
+- MIT license, security policy, contribution guide, and code of conduct.
+- Draft PRs for installer/security hardening (#4) and deterministic evaluation (#5).
+- A documented evaluation foundation that explicitly does not claim to execute agents itself.
 
-### Product pillars
+Current gaps:
+- Early-stage project; public adoption and dependency thresholds have not yet been verified.
+- No proof yet of 20 external merged contributors or 100 upstream merged PRs.
+- Recorded-result evaluation is not a real execution adapter.
+- Draft PRs are not merged product capabilities.
+- The security hardening work still identifies follow-up requirements such as DNS pinning.
 
-1. **Safe lifecycle:** install, update, backup, restore, uninstall, and network research must be safe by default.
-2. **Execution-based evaluation:** run real agent tasks, capture tool traces and outputs, and report reproducible outcomes.
-3. **Reproducibility:** versioned suites, fixed fixtures, repeated runs, documented environments, and honest limitations.
-4. **Contributor usability:** simple setup, good first issues, clear contribution rules, and responsive reviews.
-5. **Evidence-led adoption:** publish actual registry downloads, dependent packages/repos, releases, external PRs, and user-reported use cases.
+Do not call tq-forge critical infrastructure, claim unverified users/downloads, or present draft work as released.
 
-## 3. Six-month execution schedule
+## 3. The 15-day execution plan
 
-### Month 1 — Stabilize the foundation (17 Nov–16 Dec 2026)
+### Day 1 — Verify eligibility and collect baseline
 
-- Review and safely land the existing installer/security hardening work (draft PR #4) only after resolving review findings, including DNS-rebinding protection and cross-platform behavior.
-- Rebase and review the deterministic evaluation work (draft PR #5) after its dependency is integrated; preserve its explicit limitation that recorded-result evaluation does not itself execute agents.
-- Add ownership manifests and robust backup/restore tests; verify that force install and uninstall never silently destroy user customizations.
-- Test supported environments in CI: Linux and macOS first; explicitly document Windows/WSL support or non-support.
-- Publish a threat model and a support matrix.
-- Establish a baseline metrics snapshot from public GitHub and npm data.
+- Inspect Anthropic's live application page and terms.
+- Record the maintainer's actual GitHub contribution history over the last 12 months.
+- Record npm downloads using public registry data for the actual package and a clearly stated date range.
+- Check whether GitHub shows dependent repositories/packages; capture only verifiable counts.
+- Check the OpenSSF criticality score only if the project has a published score.
+- Make an evidence table with links and timestamps.
 
-**Exit gate:** clean CI on supported platforms, reviewed security changes, reproducible package install/uninstall tests, no known destructive installer path.
+**Deliverable:** one-page eligibility matrix showing each criterion as met, not met, or unverified.
 
-### Month 2 — Build the real execution adapter (17 Dec 2026–16 Jan 2027)
+### Days 2–3 — Repository credibility pass
 
-- Implement a Claude Code runtime adapter that executes a bounded task in a disposable workspace.
-- Capture task input, model/runtime version, tool calls, final output, exit status, elapsed time, token/cost metadata when available, and failure reason.
-- Use explicit permissions, allowlisted tools, timeouts, output limits, and no host secrets in the sandbox.
-- Define a stable, versioned run-result schema; reject incomplete or malformed records.
-- Keep evaluation separate from generation so the evaluator cannot reward its own output.
+- Review draft PR #4 for destructive install/uninstall behavior, safe backups, symlink handling, atomic writes, URL validation, redirect handling, and DNS-rebinding limitations.
+- Review draft PR #5 for test coverage, result schema validation, and honest claims about recorded-run evaluation.
+- Run the full GitHub Actions workflow on candidate branches and fix reproducible failures.
+- Do not merge a security change merely to meet the deadline; resolve critical review findings first.
+- Check that README claims match shipped behavior and clearly label benchmark fixtures as fixtures.
 
-**Exit gate:** end-to-end execution works on at least 10 representative tasks in a disposable environment; all results are machine-readable and replayable.
+**Deliverable:** reviewed PRs, green CI where verified, and a short known-limitations section.
 
-### Month 3 — Prove quality with benchmarks (17 Jan–16 Feb 2027)
+### Days 4–5 — Improve the project's proof
 
-- Grow a task suite to at least 30 representative tasks across skill creation, tool selection, safe file edits, error recovery, and instruction following.
-- Include positive, negative, adversarial, and regression cases.
-- Run each task at least 5 times where stochasticity matters; publish pass rate, variance, latency, cost where available, and failure categories.
-- Add human review for semantic correctness; phrase matching and static structure scores must never be presented as proof of task success.
-- Compare against a clearly documented baseline (manual workflow or another reproducible method); do not cherry-pick cases.
-- Publish raw, privacy-safe benchmark artifacts and exact reproduction commands.
+- Add a concise architecture diagram and a five-minute quick-start that a new contributor can reproduce.
+- Add a real end-to-end example using a bounded Claude Code task only if it can be safely executed and verified.
+- If a runtime execution adapter is not ready, document the evaluation harness accurately as a recorded-run evaluator; do not invent live benchmark outcomes.
+- Publish one small, reproducible benchmark with environment, task definitions, commands, raw results, and limitations.
+- Add an example showing how a user creates, scores, and validates a skill.
 
-**Exit gate:** public benchmark report with methodology, failures, limitations, and repeatable commands—not just a headline score.
+**Deliverable:** a reviewer can install tq-forge and independently reproduce one useful workflow.
 
-### Month 4 — External contributors and adoption (17 Feb–16 Mar 2027)
+### Days 6–7 — External validation
 
-- Create a small, well-scoped issue backlog with labels: good first issue, help wanted, security, evaluation, docs.
-- Add a contributor quick-start, architecture map, development setup, test instructions, release process, and maintainer response expectations.
-- Run a public contributor onboarding session or asynchronous issue sprint.
-- Ask users to test real workflows; collect consent-based, attributable case studies. Do not invent testimonials.
-- Make at least 5 small, independently reviewable contributions easy for first-time contributors.
-- Respond to issues and PRs consistently; close stale items with explanations.
+- Invite a small number of relevant developers to test the documented workflow.
+- Ask for actionable feedback, not endorsements.
+- Fix onboarding defects and documentation issues.
+- Open clearly scoped issues for genuine missing capabilities.
+- Welcome and review external PRs promptly; never ask people to submit artificial PRs for a count.
 
-**Exit gate:** first external merged PRs, documented real user feedback, and a transparent public activity record. The 20-external-contributor criterion is a stretch target, not something to manufacture.
+**Deliverable:** attributable feedback and, if it happens organically, genuine external contributions.
 
-### Month 5 — Ecosystem distribution (17 Mar–16 Apr 2027)
+### Days 8–9 — Application evidence package
 
-- Publish a stable release with signed/tagged release notes and migration guidance.
-- Improve package discoverability, examples, integrations, and installation docs.
-- Seek integrations with existing Claude Code skill collections, developer tooling, and agent evaluation projects through genuine upstream PRs.
-- Contribute useful fixes to projects tq-forge depends on or integrates with; do not submit low-value PRs to inflate counts.
-- Track npm downloads, dependent packages/repositories where available, unique external contributors, merged external PRs, release adoption, and active issue/PR health.
-- Review OpenSSF Scorecard findings and fix actionable items; report the actual score and date, never imply that a badge alone proves security.
+Prepare:
+1. Repository URL and concise project summary.
+2. Actual npm download stats and measurement window.
+3. GitHub stars, forks, releases, issues and merged PR activity with date captured.
+4. Verified downstream dependencies or users, if any.
+5. Security policy, CI workflow, test evidence and known limitations.
+6. One reproducible demonstration and benchmark report.
+7. Maintainer's actual role and contribution history.
+8. Specific plan for using Claude Ultra to improve tq-forge.
 
-**Exit gate:** stable release, independently reproducible usage examples, measurable adoption trend, and at least one meaningful external integration or documented downstream use.
+**Deliverable:** evidence notes with no unsupported claims.
 
-### Month 6 — Evidence package and application (17 Apr–17 May 2027)
+### Days 10–11 — Draft the application
 
-- Recalculate the published program criteria using current, verifiable evidence.
-- Prepare a concise application describing the project's purpose, users, ecosystem gap, maintainer role, security posture, adoption, contributor activity, and how Claude Max 20x will be used to maintain the project.
-- Link only public evidence: repository, releases, benchmark report, package registry stats, dependent repos/packages, merged external PRs, contributor list, and OpenSSF score where relevant.
-- If a published threshold is met, identify it explicitly with dated evidence.
-- If no threshold is met, use the program's invitation to explain quietly important ecosystem value and apply honestly if the form remains open.
-- If rejected or not yet eligible, publish the next evidence-based plan and continue building; do not game the metrics.
+Answer the form's questions directly:
+- **Project reach and impact:** explain the developer problem, target users, what tq-forge does, current verified adoption, and why this fills a gap in the Claude Code ecosystem.
+- **How the subscription will be used:** describe a concrete six-month engineering plan: secure lifecycle, runtime execution adapter, reliable agent evaluations, docs, external contributor support, and maintenance.
+- **Other info:** acknowledge the project's stage and explain why the work matters even if it does not yet meet a numeric threshold.
 
-**Exit gate:** a complete, truthful application submitted only when the evidence is ready, or a documented reason to wait.
+Do not say that six months of access is guaranteed. Do not use inflated claims like “industry standard,” “widely adopted,” or “production critical” without independent evidence.
 
-## 4. Monthly metrics dashboard
+### Days 12–13 — Independent review
 
-Record a dated snapshot at the end of every month. Use public, independently verifiable sources wherever possible.
+- Ask one experienced open-source developer to challenge the application narrative and evidence.
+- Verify every number and link again.
+- Remove any statement that cannot be substantiated.
+- Check that all draft PRs are described as drafts, not shipped features.
+- Re-check Anthropic's live terms and form.
 
-| Metric | Baseline (record in Month 1) | Six-month direction |
-|---|---:|---|
-| Monthly npm downloads | TBD — measure, do not estimate | Sustained organic growth |
-| Dependent repositories | TBD — verify from registry/GitHub | Toward 500 if genuine adoption supports it |
-| Dependent packages | TBD — verify | Toward 100 if genuine adoption supports it |
-| Unique external contributors with merged PRs (rolling 12 months) | TBD | Grow toward 20 |
-| PRs merged into repos not owned by maintainer (rolling 12 months) | TBD | Meaningful upstream work; 100 is a separate high bar |
-| OpenSSF criticality score | TBD | Improve only through real ecosystem adoption/importance |
-| Execution benchmark tasks | 0 until adapter exists | 30+ |
-| Repeated runs per stochastic task | 0 until adapter exists | 5+ |
-| Supported platform CI | Record actual matrix | All declared platforms green |
-| Security findings | Record reviewed findings | No unresolved critical/high findings |
+**Deliverable:** final, evidence-checked application.
 
-Never combine downloads across registries without explaining the calculation and deduplicating where possible. Never count bot accounts as unique human contributors. Never count draft, unmerged, self-authored, or duplicate PRs as merged external contributions.
+### Days 14–15 — Submit and follow up
 
-## 5. Application narrative: evidence, not hype
+- Submit the official application if the form is open and the answers are truthful.
+- Save the submission confirmation and a copy of the exact answers.
+- Watch the GitHub repository and email for requests for clarification.
+- Continue the engineering roadmap while the application is reviewed.
 
-The application should answer:
+**Deliverable:** application submitted, or a written reason to wait if a critical fact remains unverified.
 
-- What developer problem does tq-forge solve that existing tools do not solve well?
-- Who uses it today, and what concrete work does it help them complete?
-- What evidence demonstrates dependency or ecosystem impact?
-- What security and privacy controls protect users?
-- What did external contributors build or improve?
-- What will the maintainer accomplish with six months of Claude Max 20x that could not be done as effectively otherwise?
+## 4. Application draft
 
-A credible project description should say that tq-forge is a focused Claude Code skill/subagent lifecycle and evaluation toolkit. Avoid calling it a universal agent platform, production-critical infrastructure, or autonomous execution engine until those claims are backed by shipped code and independent evidence.
+### Project reach and impact
 
-## 6. Risks and guardrails
+tq-forge is an MIT-licensed open-source toolkit focused on the lifecycle of Claude Code skills and subagents. It helps developers scaffold reusable agent instructions, apply deterministic static quality checks, optimize project context, and validate recorded agent-run outcomes. The repository includes a CLI, templates, automated tests, CI, contribution guidance, and a security policy.
 
-- **Threshold risk:** a young project may not reach any numerical threshold in six months. Apply honestly if the program permits, but do not budget around acceptance.
-- **Benchmark gaming:** keep the suite versioned, include failures, and use human review for semantic outcomes.
-- **Security overclaim:** pattern-based sanitization is not a complete prompt-injection defense; network allowlisting must bind validation to the actual connection.
-- **Contributor-count gaming:** prioritize useful upstream work and genuine external contributions, not artificial PRs.
-- **Scope creep:** defer broad multi-provider orchestration until the Claude Code adapter is reliable.
-- **Cost risk:** prefer local deterministic tests and small bounded evaluation runs; document any paid model/API usage before running it.
+The project is early-stage, and we are deliberately not overstating its adoption. We are collecting verifiable package and GitHub metrics and improving the reliability of installation, evaluation, and contributor workflows. The ecosystem gap we are addressing is the lack of a simple, reproducible workflow for creating and maintaining high-quality Claude Code skills and subagents, with explicit safety checks and measurable evaluation.
 
-## 7. Immediate next actions
+### How I will use Claude Ultra
 
-1. Review and resolve draft PR #4's remaining security issues.
-2. Rebase and review draft PR #5 after #4 is integrated.
-3. Measure current npm/GitHub adoption and save the baseline with the measurement date.
-4. Implement the Claude Code execution adapter and result schema.
-5. Publish the first real execution benchmark with failures included.
+I will use Claude Ultra as an engineering multiplier to maintain and improve tq-forge over the next six months. The priorities are to complete installer and network-security hardening, build a safely sandboxed Claude Code execution adapter, expand reproducible evaluation suites, improve documentation and onboarding, review community contributions, and maintain compatibility as Claude Code evolves. I will publish implementation changes, tests, benchmark methodology, limitations, and release notes so that the work is reviewable by the open-source community.
 
-## 8. Official program reference
+### Optional context
 
-Anthropic's Claude for Open Source program page: https://claude.com/contact-sales/claude-for-oss
+I am an early-stage independent maintainer building tq-forge as a focused tool for the Claude Code ecosystem. I understand that the project may not yet meet every numerical adoption threshold. I am applying under the program's invitation for maintainers whose projects provide ecosystem value even when they do not quite fit a listed threshold. All adoption and contribution metrics will be reported exactly as verifiable.
 
-Program criteria and terms may change. Re-check the official page immediately before applying.
+**Important:** use this draft only after replacing claims with the verified Day 1 evidence. Do not submit invented download counts, users, dependent repositories, contributors, benchmark results, or merged PRs.
+
+## 5. Day 1 evidence checklist
+
+- [ ] Confirm current program wording and application availability.
+- [ ] Capture npm package downloads for a stated date range.
+- [ ] Capture GitHub repository metrics and release history.
+- [ ] Review actual maintainer PR history for the last 12 months.
+- [ ] Check for verified dependents and external contributors.
+- [ ] Check OpenSSF criticality only if a score exists.
+- [ ] Mark every eligibility route met / not met / unverified.
+- [ ] Save dated links/screenshots or API exports as evidence.
+
+## 6. Official links
+
+- Anthropic Claude for Open Source: https://claude.com/contact-sales/claude-for-oss
+- tq-forge repository: https://github.com/tanishq286/tq-forge
+- Existing hardening PR #4: https://github.com/tanishq286/tq-forge/pull/4
+- Existing evaluation PR #5: https://github.com/tanishq286/tq-forge/pull/5
+
+**Success for this sprint means a credible application submitted within 15 days—not guaranteed acceptance.**
