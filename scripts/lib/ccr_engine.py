@@ -24,6 +24,7 @@ import os
 import pathlib
 import re
 import sys
+import tempfile
 import time
 
 USER_HOME = pathlib.Path(os.environ.get("TQ_FORGE_USER_HOME") or pathlib.Path.home())
@@ -79,15 +80,35 @@ def _prune(directory):
 def store_ccr(content, kind="raw", directory=None):
     """Save `content` (owner-only) and return its id: the first 12 hex characters of its SHA-256."""
     directory = pathlib.Path(directory or CCR_DIR)
+    if directory.is_symlink():
+        raise OSError(f"refusing symlinked CCR directory: {directory}")
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if os.name == "posix":
+        directory.chmod(0o700)
     _prune(directory)
     ccr_id = hashlib.sha256(content.encode("utf-8", errors="replace")).hexdigest()[:12]
     entry = {"id": ccr_id, "kind": kind, "timestamp": int(time.time()), "content": content}
     target = directory / f"{ccr_id}.json"
-    temporary = target.with_name(f"{target.name}.{os.getpid()}.tmp")
-    temporary.touch(mode=0o600, exist_ok=True)
-    temporary.write_text(json.dumps(entry), encoding="utf-8")
-    temporary.replace(target)
+    if target.is_symlink():
+        raise OSError(f"refusing symlinked CCR file: {target}")
+    fd, temporary_name = tempfile.mkstemp(prefix=f".{ccr_id}.", suffix=".tmp", dir=str(directory))
+    temporary = pathlib.Path(temporary_name)
+    try:
+        if os.name == "posix":
+            os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+            handle.write(json.dumps(entry))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, target)
+        if os.name == "posix":
+            target.chmod(0o600)
+    except BaseException:
+        try:
+            temporary.unlink()
+        except OSError:
+            pass
+        raise
     return ccr_id
 
 

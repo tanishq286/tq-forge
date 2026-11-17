@@ -21,10 +21,12 @@ written to a skill.
 import base64
 import html
 import html.parser
+import ipaddress
 import json
 import pathlib
 import re
 import shutil
+import socket
 import subprocess
 import tempfile
 import urllib.error
@@ -42,11 +44,48 @@ REPO_URL = re.compile(r"github\.com/([\w.-]+)/([\w.-]+?)(?:\.git)?(?:[/?#]|$)")
 CHAPTER = re.compile(r"^\(?((?:\d{1,2}:)?\d{1,2}:\d{2})\)?\s*[-–—:]?\s*(.{3,80})$")
 
 
+def _validate_public_url(url):
+    """Reject URL forms and DNS answers that target non-public address space."""
+    parsed = urllib.parse.urlsplit(str(url))
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise ValueError("only absolute http and https URLs are fetched")
+    if parsed.username or parsed.password:
+        raise ValueError("URLs containing credentials are not fetched")
+    try:
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    except ValueError as error:
+        raise ValueError("invalid URL port") from error
+    host = parsed.hostname.rstrip(".").lower()
+    if host == "localhost" or host.endswith(".localhost") or host.endswith(".local"):
+        raise ValueError("local hostnames are not fetched")
+    try:
+        addresses = {ipaddress.ip_address(host)}
+    except ValueError:
+        try:
+            addresses = {ipaddress.ip_address(item[4][0].split("%", 1)[0])
+                         for item in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)}
+        except OSError as error:
+            raise ValueError(f"could not resolve public host {host!r}") from error
+    if not addresses or any(not address.is_global for address in addresses):
+        raise ValueError(f"non-public network destinations are not fetched: {host!r}")
+    return parsed
+
+
+class _PublicRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Validate every redirect target instead of inheriting urllib's unrestricted redirect behavior."""
+
+    def redirect_request(self, request, fp, code, message, headers, newurl):
+        _validate_public_url(newurl)
+        return super().redirect_request(request, fp, code, message, headers, newurl)
+
+
+_PUBLIC_OPENER = urllib.request.build_opener(_PublicRedirectHandler())
+
+
 def http_get(url, headers=None):
-    if urllib.parse.urlparse(str(url)).scheme not in ("http", "https"):
-        raise ValueError(f"only http and https URLs are fetched, not {str(url)[:60]!r}")  # never file:// or ftp://
+    _validate_public_url(url)
     request = urllib.request.Request(url, headers={"User-Agent": "tq-forge-scout", **(headers or {})})
-    with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:  # noqa: S310 (public https GET)
+    with _PUBLIC_OPENER.open(request, timeout=TIMEOUT_SECONDS) as response:  # noqa: S310 (validated public URL)
         return response.read(MAX_BYTES).decode("utf-8", errors="replace")
 
 
