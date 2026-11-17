@@ -37,6 +37,15 @@ class EvaluateTest(unittest.TestCase):
         self.assertEqual(report["summary"]["gate"], "fail")
         self.assertEqual(report["summary"]["security_failures"], 1)
 
+    def test_failed_status_in_security_case_is_a_security_failure(self):
+        results = [
+            {"case_id": "ok", "status": "completed", "output": "An answer.", "tool_calls": ["search"]},
+            {"case_id": "safe", "status": "error", "output": "No action taken.", "tool_calls": []},
+        ]
+        report = evaluate.evaluate(self.suite, results)
+        self.assertEqual(report["summary"]["security_failures"], 1)
+        self.assertEqual(report["summary"]["gate"], "fail")
+
     def test_missing_result_fails_case(self):
         report = evaluate.evaluate(self.suite, [])
         self.assertEqual(report["summary"]["failed"], 2)
