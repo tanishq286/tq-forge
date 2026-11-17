@@ -11,6 +11,9 @@ Run: python3 -m unittest discover -s tests -v
 import json
 import pathlib
 import re
+import shutil
+import subprocess
+import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -66,6 +69,44 @@ class MarketplaceShapeTest(unittest.TestCase):
                 self.assertIsInstance(paths, list)
                 for path in paths:
                     self.assertIsInstance(path, str, f"skills entry is not a path: {path!r}")
+
+
+class InstallerSafetyTest(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("node") and shutil.which("bash") and shutil.which("python3"),
+                         "CLI integration requires Node, bash and Python 3")
+    def test_uninstall_preserves_a_customized_bundled_skill(self):
+        with tempfile.TemporaryDirectory(prefix="tq-forge-cli-") as temporary:
+            root = pathlib.Path(temporary)
+            env = {
+                **__import__("os").environ,
+                "TQ_FORGE_HOME": str(root / "state"),
+                "CLAUDE_SKILLS_DIR": str(root / "skills"),
+            }
+            cli = ROOT / "bin" / "cli.js"
+            subprocess.run(["node", str(cli), "install"], env=env, check=True, capture_output=True, text=True)
+            custom = root / "skills" / "tq-forge" / "SKILL.md"
+            custom.write_text(custom.read_text(encoding="utf-8") + "\nUser customization.\n", encoding="utf-8")
+            subprocess.run(["node", str(cli), "uninstall"], env=env, check=True, capture_output=True, text=True)
+            self.assertIn("User customization.", custom.read_text(encoding="utf-8"))
+
+    @unittest.skipUnless(shutil.which("node") and shutil.which("bash") and shutil.which("python3"),
+                         "CLI integration requires Node, bash and Python 3")
+    def test_force_install_backs_up_existing_skill(self):
+        with tempfile.TemporaryDirectory(prefix="tq-forge-cli-") as temporary:
+            root = pathlib.Path(temporary)
+            env = {
+                **__import__("os").environ,
+                "TQ_FORGE_HOME": str(root / "state"),
+                "CLAUDE_SKILLS_DIR": str(root / "skills"),
+            }
+            cli = ROOT / "bin" / "cli.js"
+            subprocess.run(["node", str(cli), "install"], env=env, check=True, capture_output=True, text=True)
+            custom = root / "skills" / "tq-forge" / "SKILL.md"
+            custom.write_text("local custom skill\n", encoding="utf-8")
+            subprocess.run(["node", str(cli), "install", "--force"], env=env, check=True, capture_output=True, text=True)
+            backups = list((root / "state" / "backups").glob("*-skill-tq-forge"))
+            self.assertTrue(backups, "force install should retain the replaced skill in backups")
+            self.assertIn("local custom skill", (backups[0] / "SKILL.md").read_text(encoding="utf-8"))
 
 
 class SkillCountTest(unittest.TestCase):
