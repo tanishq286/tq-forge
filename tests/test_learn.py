@@ -235,6 +235,26 @@ class SocialAndWebTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     intel_scout.http_get(url)
 
+    def test_private_and_reserved_ip_literals_are_rejected(self):
+        for url in ("http://127.0.0.1/", "http://10.0.0.1/", "http://169.254.169.254/latest/meta-data/",
+                    "http://[::1]/", "http://192.168.1.10/"):
+            with self.assertRaises(ValueError, msg=url):
+                intel_scout._validate_public_url(url)
+
+    def test_dns_answers_must_all_be_public(self):
+        public = (None, None, None, None, ("93.184.216.34", 0))
+        private = (None, None, None, None, ("10.0.0.8", 0))
+        with mock.patch.object(intel_scout.socket, "getaddrinfo", return_value=[public]):
+            intel_scout._validate_public_url("https://example.test/")
+        with mock.patch.object(intel_scout.socket, "getaddrinfo", return_value=[public, private]):
+            with self.assertRaises(ValueError):
+                intel_scout._validate_public_url("https://mixed.example.test/")
+
+    def test_redirect_targets_are_validated(self):
+        handler = intel_scout._PublicRedirectHandler()
+        with self.assertRaises(ValueError):
+            handler.redirect_request(None, None, 302, "Found", {}, "http://127.0.0.1/admin")
+
 
 class CollectTest(unittest.TestCase):
     def test_a_url_goes_to_the_collector_for_its_kind(self):

@@ -2,10 +2,9 @@
 
 # 🔨 tq-forge
 
-**An autonomous skill + agent factory for [Claude Code](https://claude.com/claude-code).**
+**An agent engineering toolkit for building, validating, evaluating and optimizing AI workflows.**
 
-Forge production-grade slash-command skills and autonomous subagents from a one-line intent —
-scored deterministically, sandboxed safely, and promoted into production without leaving your terminal.
+Build Claude Code skills and subagents, validate their structure, evaluate recorded execution outcomes, and optimize context — with deterministic checks and explicit safety boundaries.
 
 [![npm](https://img.shields.io/npm/v/tq-forge?color=cb3837&logo=npm)](https://www.npmjs.com/package/tq-forge)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -119,6 +118,28 @@ The same engine also shrinks what Claude Code loads on every turn. See [Context 
 
 ---
 
+## Agent evaluation
+
+Agent quality needs more than a static prompt score. The evaluation harness adds a separate, deterministic gate for observable outcomes from recorded agent executions.
+
+- Versioned JSON evaluation suites with stable case IDs.
+- Required and forbidden output checks.
+- Required and forbidden tool-call checks.
+- Optional latency and cost budgets.
+- Hard-fail security cases, even when the overall pass-rate threshold is met.
+- JSON reports suitable for CI and benchmark archives.
+
+```bash
+npx tq-forge evaluate --suite evals/core-suite.json --results evals/fixtures/core-results.jsonl
+npx tq-forge evaluate --suite evals/core-suite.json --results evals/fixtures/core-results.jsonl --json
+```
+
+See [Agent evaluation documentation](docs/AGENT_EVALUATION.md) for the result schema and limitations.
+
+**Important:** this first evaluator does not execute agents or prove semantic correctness. A runtime adapter must execute each task and export its tool trace, output, latency and cost. Phrase matching is a smoke-test assertion, not a substitute for expert evaluation, repeated trials, calibrated judges or red-team testing. Never report a benchmark without its suite version, runtime/model version, sample size and failure breakdown.
+
+---
+ 
 ## Context optimizer
 
 Claude Code loads some text into the main conversation before your first prompt and resends it every turn: `CLAUDE.md`, rules without a `paths:` scope, every skill's description, every subagent's description, and each MCP server's tool names and instructions. `tq-forge optimize` moves that text to places that load on demand. It deletes nothing.

@@ -24,6 +24,7 @@ import os
 import pathlib
 import re
 import sys
+import tempfile
 import urllib.parse
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -129,11 +130,22 @@ def write_file(path, content, force, executable=False):
             return False
         raise ScaffoldError(f"{path} already exists with different content; pass --force to overwrite")
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".tmp")
-    temporary.write_text(content, encoding="utf-8")
-    if executable:
-        temporary.chmod(0o755)
-    temporary.replace(path)
+    fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
+    temporary = pathlib.Path(temporary_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if executable:
+            temporary.chmod(0o755)
+        temporary.replace(path)
+    except BaseException:
+        try:
+            temporary.unlink()
+        except OSError:
+            pass
+        raise
     return True
 
 

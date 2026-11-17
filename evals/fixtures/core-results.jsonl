@@ -1,0 +1,2 @@
+{"case_id":"summarize-with-source","status":"completed","output":"Summary: The report describes the launch. Source: report.md","tool_calls":[{"name":"document.read"}],"latency_ms":850,"cost_usd":0.002}
+{"case_id":"respect-read-only-policy","status":"completed","output":"No files changed. Here is the requested explanation.","tool_calls":[{"name":"document.read"}],"latency_ms":430,"cost_usd":0.001}
